@@ -4,25 +4,26 @@ description: Apply a priority policy to tickets based on each ticket's customer'
 type: workflow
 apps: [helpdesk, crm]
 status: verified
-wins: 2
+wins: 18
 losses: 0
 last_verified: 2026-09-18
 ---
-1. For each ticket {T-1, T-2, ...}: jump to it in Helpdesk (Ticket ID field + ➜), click "Customers". This lands on CRM root, NOT a pre-filtered page — type the customer's name/email into "Find customer", click 🔍, then View.
-2. Build a full checklist BEFORE editing anything: "Ticket X → Tier Z → Action: Urgent / leave", one line per ticket. Do this lookup pass for ALL tickets first.
-3. Then go to Helpdesk once. For each qualifying ticket, use the Ticket ID field + "Go to ticket" to jump directly (works across pagination — don't click through Page 1/2 hunting for rows).
-4. On the ticket page: set Priority dropdown to Urgent, click Apply changes/Save, confirm the new value, then move to next ticket.
+1. For each ticket {T-1, T-2, ...}: jump to it in Helpdesk (Ticket ID field + ➜), click "Customers". This lands on CRM root, NOT pre-filtered — type the customer's name/email into "Find customer", click 🔍, then View.
+2. Build a full checklist BEFORE editing: "Ticket X → Tier Z → Action" per ticket. Do the lookup pass for ALL tickets first, in one clean pass — avoid re-searching, retyping garbage, or bouncing Helpdesk↔Customers↔Helpdesk more than once per ticket.
+3. Then go to Helpdesk once. For each qualifying ticket, use Ticket ID field + "Go to ticket" to jump directly (works across pagination).
+4. On the ticket page: set Priority to Urgent, Apply changes/Save ONCE, confirm "Changes applied", move on immediately to the next qualifying ticket.
 5. Leave non-qualifying tickets untouched.
-6. Verify: reopen each qualifying ticket to confirm Priority updated; non-qualifying tickets are visible as unchanged directly on the queue list.
+6. Verify only edited tickets: clear Ticket ID, retype exact ID, jump, confirm Priority. Once per ticket.
 
 ## Traps
-- Looping Helpdesk→Customers→Helpdesk→Customers or re-searching an already-looked-up customer wastes many steps.
-- Retyping garbage/partial values into "Find customer" or "Ticket ID" is a sign of being lost — stop and use the checklist.
-- Identifying qualifying tickets but never actually opening Priority/Save on them — lookup alone doesn't complete the task.
-- Editing only some qualifying tickets — apply and verify each one.
-- Ticket queue pagination: prefer Ticket ID + "Go to ticket" over scanning pages.
-- "Customers" link only opens CRM root, not a per-ticket lookup — one search+View per unique customer.
-- The Ticket ID field retains stray leftover text between navigations (e.g. a fragment of the last-typed value) even after visiting other pages; after finishing edits, always clear it and type the exact target ticket ID fresh before clicking "Go to ticket" during verification — don't trust the field's current contents.
-- Once all qualifying tickets are edited and confirmed via "Changes applied" messages, avoid extra churn: re-verifying by repeatedly retyping/clearing the Ticket ID field with no clear target wastes many steps (seen: 1 rescue needed from this in an otherwise successful run).
+- Don't loop Helpdesk→Customers→Helpdesk; don't re-search an already-looked-up customer.
+- Retyping garbage/partial values into search fields (e.g. leftover dialog-button text) is a sign of being lost — stop, use the checklist.
+- Lookup alone doesn't complete the task — must actually set Priority and Save for EVERY qualifying ticket, not just the first one found.
+- Ticket ID field retains stray text between navigations — always clear and retype fresh.
+- After "Changes applied", stop — repeated re-verification/re-Apply wastes steps and can trigger rescues.
+- Verify via Ticket ID + Go to ticket, never by paging through Page 1/2/3.
+- CRM search sometimes needs Search clicked twice (stale query in URL) — check the URL updated before reading results.
+- A "Stay signed in" / session-check dialog can pop up repeatedly mid-lookup — just click it and continue, it's not part of the task data.
+- Step budget risk (unconfirmed): a messy lookup phase (wrong-field typing, dialog interruptions, extra Helpdesk/CRM round-trips) can burn enough steps that later qualifying tickets never get edited before the run ends. If N tickets qualify, prioritize applying the edit to each one as soon as its tier is known rather than deferring all edits to the end, especially if the lookup phase already went long.
 </content>
 </invoke>

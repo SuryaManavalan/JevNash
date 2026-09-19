@@ -4,8 +4,8 @@ description: Navigating the CRM customer database - search, disambiguate duplica
 type: app-map
 apps: [crm]
 status: verified
-wins: 5
-losses: 2
+wins: 44
+losses: 10
 last_verified: 2026-09-18
 ---
 1. Dismiss "What's new" dialog if shown (Maybe later).

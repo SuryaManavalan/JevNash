@@ -1,10 +1,10 @@
 ---
 name: helpdesk
-description: Navigating the Helpdesk ticket list - finding tickets by ID, opening them, editing priority. Load for any ticket-update task.
+description: Navigating the Helpdesk ticket list - finding tickets by ID, opening them, editing priority/status/notes. Load for any ticket-update task.
 type: app-map
 apps: [helpdesk]
 status: verified
-wins: 3
+wins: 36
 losses: 2
 last_verified: 2026-09-18
 ---
@@ -20,4 +20,8 @@ Traps:
 - The "Add internal note" text field is NOT a scratchpad - do not type customer emails/IDs into it to "remember" them. It saves as a permanent note. Track data yourself (in your own working notes), not by typing into unrelated fields.
 - Clicking "Customers" from a ticket takes you to the CRM workspace root, not a pre-filtered view - you still need to search by name/email there.
 - Going back and forth between Helpdesk and Customers repeatedly per ticket wastes many steps; instead, look up ALL customer tiers first in one pass through Customers, then go back to Helpdesk once and jump to each ticket needing a change.
+- Post-action VERIFICATION is a common failure point: after issuing a refund/making a change and navigating away, typing the ticket ID back into the "Ticket ID" field and clicking jump can land on the WRONG ticket, or the field can retain a stale ID from a previous step/be slow to update. In one run this caused ~15 wasted retype/click cycles and paging through 3 pages before landing on the right ticket, even though the actual task actions had already succeeded and been confirmed ("Changes applied.").
+  - Mitigation: after typing the ticket ID, visually confirm the field's value matches before clicking jump; don't click jump repeatedly on stale/wrong values. If jump seems to misbehave, fall back to Page N + row "Open" button, which reliably lands on the correct ticket (row shows ID, Subject, Customer, Status to confirm).
+  - If the task's actions already produced "Changes applied." confirmations, treat that as done - do not risk extra edits while merely trying to re-verify; a single confirmed re-open is enough.
 </content>
+</invoke>

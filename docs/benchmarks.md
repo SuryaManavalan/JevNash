@@ -18,17 +18,43 @@ task families in rotation with fresh random data; the brain carried over between
 | D | Haiku foreman replaces the static plan; only the foreman may finish | 8 | 0.98 | 7 | 0.17 |
 | E | + app confirmations recorded, shorter page excerpt for Jev, Haiku briefs once the brain is mature | 8 | 0.88 | 7 | 0.17 |
 | F | + verification subgoals rejected with a constrained second opinion | 8 | 0.98 | 7 | 0.13 |
+| G | + typed values limited to what the foreman quotes, foreman refresh every 4 ticks, broader verify guard; fifth family `double_charge` added | 10 | 0.90 | 9 | 0.11 |
+| H | **Chaos mode** (labels and nav change per episode, session interstitials with a log-out decoy); foreman sees on-screen controls, cycle guard resets per subgoal | 10 | 0.80 | 8 | 0.12 |
 
 Rounds A-F used four task families (refund, update_contact, reorder, escalate). Two 4-task runs
 between B and C are not tabled: one was invalid (a half-applied patch of mine made every typing action
 fail) and one, right after two-stage typing landed, scored 2 of 4 and was superseded by round C.
 
-Recurring failures: `refund` typed the wrong amount twice (the value picker chose a different number on
-the page); `reorder` once ordered an extra SKU. `escalate` (three tickets x CRM lookups) passes but
-still uses the full 60-step allowance.
+Step counts fell as well: `escalate` from the full 60-step allowance to 32-39, `refund` from 24-60 to 10-21.
+
+Failures that recurred: `refund` typed the wrong amount twice (rounds D-F, before typed values were limited to
+what the foreman quotes); `reorder` once ordered an extra SKU; `double_charge` failed 3 of 6 times because the
+billing account number hides behind a collapsed "More" section and the foreman kept sending Jev to a
+"Billing tab" that does not exist - the nav link of that name leaves the customer record. After the third
+failure the brain wrote that trap down on its own (`brain/workflows/void-duplicate-invoice.md`); in chaos mode
+the foreman also quoted dialog buttons ("Stay signed in"), which then got typed into search boxes (fixed after
+round H: control labels are never typing candidates).
 
 Where the money goes in round F (8 tasks, $1.06): Jev ticks $0.32, foreman $0.2x, briefs, rescues and
 consolidation the rest. LLM spend still dominates.
+
+## One continuous hour (`--env suite --chaos --minutes 60 --usd 5`)
+
+A single unattended session, chaos mode on, five task families in rotation, brain carried over from
+the rounds above. Log: `runs/shift_60min.log` (not committed).
+
+| Measure | Result |
+| --- | --- |
+| Wall clock | 60 min, no crashes or restarts |
+| Tasks finished | 41 |
+| Full passes | 35 (85%); mean score 0.92 |
+| Last 21 tasks | 20 full passes |
+| Misses | `reorder` skipped one qualifying SKU 3 times; `double_charge` never found the hidden account number twice; `escalate` ran out of steps once |
+| Harm checks tripped | 0 of the 6 misses came from a harm check: every miss was incomplete work, not damage |
+| Spend | $4.21 total, $0.10 per task (Claude $2.82, Jev ~$1.38 assumed) |
+
+The spend ceiling was $5, so pacing never had to throttle. At this rate an hour costs roughly $4 and clears
+about 40 multi-app tasks.
 
 ## Drawing challenge (`--env paint`, scene `house`)
 

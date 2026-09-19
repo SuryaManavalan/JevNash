@@ -4,8 +4,8 @@ description: When typing into ANY input field, the typed text must be the litera
 type: lesson
 apps: [crm, desk, inventory, billing]
 status: verified
-wins: 9
-losses: 2
+wins: 16
+losses: 5
 last_verified: 2026-09-18
 ---
 Failure pattern observed (x4, all scored 0): the executor typed literal placeholder text —

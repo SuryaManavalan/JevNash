@@ -47,6 +47,7 @@ The brain is documented in `docs/brain.md`. Measured results are in `docs/benchm
 # enterprise workstreams across the Acme Suite playground (helpdesk, CRM, billing, inventory)
 uv run python -m jevnash.run --env suite --minutes 60 --usd 3 --dashboard
 uv run python -m jevnash.run --env suite --family refund --episodes 3 --dashboard --headed
+uv run python -m jevnash.run --env suite --chaos --minutes 60 --usd 5      # labels/nav change per task, sessions get interrupted
 
 # drawing challenge: replicate a picture in a style; --planner picks the LLM tier being tested
 uv run python -m jevnash.run --env paint --style anime --scene house --planner cheap --episodes 1 --dashboard
