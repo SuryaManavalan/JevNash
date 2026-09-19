@@ -49,6 +49,10 @@ uv run python -m jevnash.run --env suite --minutes 60 --usd 3 --dashboard
 uv run python -m jevnash.run --env suite --family refund --episodes 3 --dashboard --headed
 uv run python -m jevnash.run --env suite --chaos --minutes 60 --usd 5      # labels/nav change per task, sessions get interrupted
 
+# real internet, read-only, v2 roles; stays on the start domain unless --allow adds more
+uv run python -m jevnash.run --env web_open --v2 --episodes 1 --dashboard \
+    --task 'Use the search box to open the article on "Eiffel Tower" and note its height.' --url https://en.wikipedia.org/wiki/Main_Page
+
 # drawing challenge: replicate a picture in a style; --planner picks the LLM tier being tested
 uv run python -m jevnash.run --env paint --style anime --scene house --planner cheap --episodes 1 --dashboard
 ```

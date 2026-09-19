@@ -17,7 +17,7 @@ from ..events import bus
 
 SCAN_JS = """
 () => {
-  document.querySelectorAll('[data-jev]').forEach(e => e.removeAttribute('data-jev'));
+
   const out = []; const seen = new Set(); let i = 0;
   // A large fixed layer over the middle of the viewport is a modal: only its contents are usable.
   let blocker = null;
@@ -26,7 +26,10 @@ SCAN_JS = """
     if (s.position === 'fixed' && !n.closest('#jev-layer') && b.width * b.height > innerWidth * innerHeight * 0.3) blocker = n;
   }
   const sel = 'a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=tab], [onclick]';
-  for (const el of document.querySelectorAll(sel)) {
+  // Real sites hide controls inside web components: walk open shadow roots too.
+  const deep = (root, acc) => { for (const el of root.querySelectorAll('*')) { el.removeAttribute('data-jev'); if (el.matches(sel)) acc.push(el);
+    if (el.shadowRoot) deep(el.shadowRoot, acc); } return acc; };
+  for (const el of deep(document, [])) {
     if (el.closest('#jev-layer')) continue;
     if (blocker && !blocker.contains(el)) continue;
     const r = el.getBoundingClientRect();
@@ -109,7 +112,7 @@ OVERLAY_JS = """
 }
 """
 
-ACTION_RE = re.compile(r'^(click|type|select) \[(\d+)\]\s*(.*)$', re.S)
+ACTION_RE = re.compile(r'^(click|type|select|enter) \[(\d+)\]\s*(.*)$', re.S)
 
 
 class BrowserEnv(GameEnv):
@@ -138,12 +141,30 @@ class BrowserEnv(GameEnv):
     def succeeded(self) -> bool:
         raise NotImplementedError
 
+    def _eval(self, js: str, arg=None):
+        """page.evaluate that survives the real web: a navigation can destroy the context mid-call."""
+        for attempt in range(4):
+            try:
+                return self.page.evaluate(js, arg) if arg is not None else self.page.evaluate(js)
+            except Exception:
+                if attempt == 3:
+                    raise
+                try:
+                    self.page.wait_for_load_state("domcontentloaded", timeout=8000)
+                except Exception:
+                    pass
+                self.page.wait_for_timeout(400)
+
     # --- GameEnv ---
     def reset(self) -> None:
         self.task, url, self.inputs = self.new_task()
         self.steps, self.finished, self.message = 0, False, "Task started."
         self.pool: list[str] = list(self.inputs)
-        self.page.goto(url, wait_until="domcontentloaded")
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        except Exception:  # slow sites: settle for the first bytes and let the page keep loading
+            self.page.goto(url, wait_until="commit", timeout=45000)
+            self.page.wait_for_timeout(3000)
         self._snap()
 
     def _snap(self, settle: bool = False) -> None:
@@ -159,7 +180,7 @@ class BrowserEnv(GameEnv):
 
     def observe(self) -> dict[str, Any]:
         # A modal's text comes first: it is what the user is actually looking at.
-        text = self.page.evaluate("""() => { const d = document.querySelector('[role=dialog]');
+        text = self._eval("""() => { const d = document.querySelector('[role=dialog]');
             const m = document.querySelector('main, #content, body');
             return (d ? 'DIALOG: ' + d.innerText + ' | PAGE BEHIND: ' : '') + (m.innerText || '') }""")
         if self.harvest:
@@ -184,7 +205,7 @@ class BrowserEnv(GameEnv):
             "form_state": [
                 {"field": e["text"], "value": e["value"]} if e["type"] not in ("checkbox", "radio")
                 else {"field": e["text"], "checked": e["checked"]}
-                for e in self.page.evaluate(SCAN_JS)
+                for e in self._eval(SCAN_JS)
                 if e["tag"] in ("input", "select", "textarea")
             ],
             "steps_left": self.max_steps - self.steps,
@@ -192,13 +213,15 @@ class BrowserEnv(GameEnv):
         }
 
     def legal_actions(self) -> list[str]:
-        self.elements = self.page.evaluate(SCAN_JS)
+        self.elements = self._eval(SCAN_JS)
         actions = []
         for e in self.elements:
             if e["tag"] == "select":
                 actions += [f'select [{e["i"]}] {e["text"]} = "{o}"' for o in e["options"]]
             elif e["tag"] == "textarea" or (e["tag"] == "input" and e["type"] in (
                     "text", "search", "email", "tel", "url", "number", "")):
+                if e["value"]:  # many search boxes have no button: Enter submits what was typed
+                    actions.append(f'enter [{e["i"]}] press Enter in {e["text"]}')
                 if self.harvest:  # two-stage: choose the field now, the value in a second Choice
                     actions.append(f'type [{e["i"]}] {e["text"]} = ?')
                 else:
@@ -251,6 +274,8 @@ class BrowserEnv(GameEnv):
                     loc.evaluate("el => el.click()")
             elif verb == "type":
                 loc.fill(value, timeout=4000)
+            elif verb == "enter":
+                loc.press("Enter", timeout=4000)
             else:
                 loc.select_option(label=value, timeout=4000)
             self.page.wait_for_timeout(350)  # give a navigation time to start before waiting on it
@@ -329,40 +354,90 @@ class WikiRaceEnv(BrowserEnv):
 
 
 class OpenWebEnv(BrowserEnv):
-    """Any browser task on any site. With no programmatic success check available, Jev itself
-    judges after every step whether the task is complete."""
+    """Any browser task on any real site. There is no programmatic success check on the open web, so Jev
+    judges completion from the final page. With `workstream=True` the v2 roles run it (Librarian, foreman,
+    notes) and the foreman decides when to stop.
+
+    Guardrails for the live internet, enforced here rather than trusted to a model:
+      - navigation is confined to an allowlist of domains (default: the start URL's domain)
+      - password, payment and e-mail fields are never offered for typing
+      - controls that buy, pay, sign in, register, subscribe, delete or post are never offered
+    """
 
     max_steps = 15
+    UNSAFE = re.compile(r"\b(buy|pay|checkout|check out|purchase|order now|add to (cart|basket|bag)|sign ?in|log ?in|sign ?up|"
+                        r"register|subscribe|donate|delete|remove|post|publish|send|submit|accept all|create account)\b", re.I)
+    SECRET_FIELD = re.compile(r"password|passcode|card|cvv|cvc|iban|ssn|e-?mail", re.I)
 
-    def __init__(self, task: str, url: str, inputs: list[str] | None = None, **kw):
+    def __init__(self, task: str, url: str, inputs: list[str] | None = None, workstream: bool = False,
+                 allow: list[str] | None = None, **kw):
+        from urllib.parse import urlparse
+
         from ..clients import JevClient
 
         self._task, self._url = task, url
         # Strings the agent may type: given explicitly, plus anything quoted in the task.
         self._inputs = list(dict.fromkeys((inputs or []) + re.findall(r'"([^"]+)"', task)))
-        self.jev, self.p_done = JevClient(), 0.0
+        self.jev, self.p_done, self._judged = JevClient(), 0.0, True
+        host = urlparse(url).hostname or ""
+        self.allow = [d.lower() for d in (allow or [".".join(host.split(".")[-2:])])]
+        if workstream:
+            self.can_finish, self.harvest, self.text_budget, self.max_steps = True, False, 2200, 30
         super().__init__(**kw)
 
     def new_task(self):
         self.p_done = 0.0
         return self._task, self._url, self._inputs
 
+    def _allowed(self) -> bool:
+        from urllib.parse import urlparse
+
+        host = (urlparse(self.page.url).hostname or "").lower()
+        return any(host == d or host.endswith("." + d) for d in self.allow)
+
+    def legal_actions(self) -> list[str]:
+        keep = []
+        for a in super().legal_actions():
+            label = a.split("] ", 1)[-1]
+            if a.startswith("type") and self.SECRET_FIELD.search(label):
+                continue
+            if a.startswith("click") and self.UNSAFE.search(label):
+                continue
+            keep.append(a)
+        return keep
+
     def step(self, action: str) -> dict[str, Any]:
         self._judged = False
-        return super().step(action)
+        info = super().step(action)
+        if not self._allowed():  # left the allowlist: come straight back and say so
+            away = self.page.url
+            self.page.go_back(wait_until="domcontentloaded")
+            self.message = f"Blocked: {away.split('/')[2]} is outside the allowed sites. Returned to the previous page."
+            info["error"] = self.message
+        return info
 
-    def succeeded(self) -> bool:
-        if not getattr(self, "_judged", True):
+    def judge(self) -> float:
+        if not self._judged:
             obs = {k: v for k, v in self.observe().items() if k not in ("message", "steps_left")}
+            obs["notes_taken_by_agent"] = getattr(self, "notes", [])
             ans = self.jev.ask(obs, {"done": {
                 "type": "noul",
-                "instructions": "Has `task` been fully completed, judging by the current page?",
+                "instructions": "Has `task` been fully completed, judging by the current page and `notes_taken_by_agent`?",
                 "criteria": {"true": "The page shows the end state the task asked for",
                              "false": "More steps are still needed, or the page shows something else"},
             }}, purpose="judge_done")
             self.p_done, self._judged = ans["done"]["noul"], True
             bus.emit("judge", p_done=self.p_done)
-        return self.p_done >= 0.85
+        return self.p_done
+
+    def succeeded(self) -> bool:
+        return False if self.can_finish else self.judge() >= 0.7
+
+    def report(self) -> dict[str, bool]:
+        return {f"Jev judges the task complete (p={self.judge():.2f})": self.judge() >= 0.7}
+
+    def outcome(self) -> float:
+        return 1.0 if self.judge() >= 0.7 else 0.0
 
 
 class CanvasGameEnv(BrowserEnv):

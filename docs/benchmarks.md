@@ -77,3 +77,27 @@ cost $0.64 and drifted off-plan.
 
 "Style" here is enforced by instructions and grid size, and the score measures fidelity only; nothing
 yet judges whether an image actually looks anime or photo-realistic.
+
+## Live internet, read-only (`--env web_open --v2`, 2026-09-19)
+
+First runs on real public sites, with the guardrails in `OpenWebEnv`: navigation confined to the start
+domain, no password/e-mail/payment fields, and no controls that buy, sign in, register, post or delete.
+There is no ground truth on the open web, so "done" is Jev's own judgement of the final page plus the
+agent's notes; I checked each answer by hand.
+
+| Site | Task | Steps | Answer the agent noted | Correct? | $ |
+| --- | --- | --- | --- | --- | --- |
+| books.toscrape.com | price of "A Light in the Attic" | 1 | GBP 51.77 | yes | 0.07 |
+| en.wikipedia.org | search "Eiffel Tower", note height and completion year | 3 | 330 m to tip (300 m architectural), 31 March 1889 | yes | 0.07 |
+| news.ycombinator.com | open comments of the #1 story, note title and points | 2 | title and points at the time | yes | 0.05 |
+| docs.python.org | search "asyncio", open the library page, note first high-level API | 4 | "run Python coroutines concurrently..." | yes | 0.07 |
+| developer.mozilla.org | site-search "flatMap", open the reference page, note return value | 4 | "A new array ... flattened by a depth of 1" | yes (second attempt) | 0.03 |
+
+What the real web broke that the playground never did: a page-load timeout, a script context destroyed
+mid-navigation, and MDN's search box living inside a web component's shadow DOM (invisible to the first
+scanner; the first MDN attempt burned all 30 steps). All three are fixed. Jev's completion judge scored the
+correct Wikipedia and Hacker News runs 0.82-0.83, under my arbitrary 0.85 bar; with failures scoring
+0.02 the bar is now 0.7 - tuned on six runs, so treat it as provisional.
+
+Nothing here logs in, pays, posts or submits. Tasks that do need credentials, an allowlist and approval
+gates decided by the account owner first.

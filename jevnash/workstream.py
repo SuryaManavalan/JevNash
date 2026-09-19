@@ -215,6 +215,7 @@ class Workstream:
             return
         fresh = [str(n)[:170] for n in out.get("notes", []) if not TODO.match(str(n)) and str(n) not in self.notes]
         self.notes = (self.notes + fresh[:6])[-24:]
+        self.env.notes = self.notes  # adapters that judge completion themselves may want what was learned
         for v in out.get("values", [])[:10]:
             if hasattr(self.env, "pool") and str(v) not in self.env.pool:
                 self.env.pool.append(str(v))

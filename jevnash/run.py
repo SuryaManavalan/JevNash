@@ -265,6 +265,7 @@ class Harness:
         record["plan"] = (ws_ctl.plan if ws_ctl else [])
         record["rescues"] = ws_ctl.rescues if ws_ctl else 0
         record["notes"] = ws_ctl.notes if ws_ctl else []
+        self.last_notes = record["notes"]
         if bus.shot:  # keep the last frame of browser episodes for later inspection
             (self.run_dir / f"episode_{n}.jpg").write_bytes(bus.shot)
         bus.emit("episode_end", n=n, outcome=outcome, view=self.env.render(),
@@ -342,6 +343,8 @@ def main() -> None:
     ap.add_argument("--task", help="web_open: what to accomplish")
     ap.add_argument("--url", help="web_open: where to start")
     ap.add_argument("--inputs", default="", help="web_open: comma-separated strings the agent may type")
+    ap.add_argument("--allow", default="", help="web_open: comma-separated domains the agent may visit (default: the start domain)")
+    ap.add_argument("--v2", action="store_true", help="web_open: run with the v2 roles (Librarian, foreman, notes)")
     ap.add_argument("--rulebook", help="PDF/image/doc with rules or a brief; parsed via LlamaParse")
     ap.add_argument("--run-dir", default=None)
     ap.add_argument("--seed", type=int, default=None)
@@ -352,7 +355,8 @@ def main() -> None:
         if not (args.task and args.url):
             ap.error("web_open needs --task and --url")
         kwargs |= {"task": args.task, "url": args.url,
-                   "inputs": [s for s in args.inputs.split(",") if s]}
+                   "inputs": [s for s in args.inputs.split(",") if s], "workstream": args.v2,
+                   "allow": [s for s in args.allow.split(",") if s] or None}
     if args.family:
         kwargs["family"] = args.family
     if args.chaos:
@@ -391,6 +395,8 @@ def main() -> None:
             print(f"episode {i}: outcome={outcome}  mean={sum(outcomes) / len(outcomes):.3f}  "
                   f"jev={budget.jev_calls} llm={budget.llm_calls} cache={budget.cache_hits} "
                   f"spent=${budget.spent:.3f}")
+            if getattr(h, "last_notes", None):
+                print("    notes:", " | ".join(h.last_notes[-6:]))
             if hasattr(env, "report"):
                 failed = [name for name, ok in env.report().items() if not ok]
                 print(f"    [{getattr(env, 'task_family', '')}] steps={env.steps}" + (f"  FAILED: {failed}" if failed else "  all checks pass"))

@@ -4,9 +4,9 @@ description: Issue a refund in Billing for a customer's invoice and log it on a 
 type: workflow
 apps: [billing, helpdesk, crm]
 status: verified
-wins: 20
+wins: 21
 losses: 0
-last_verified: 2026-09-18
+last_verified: 2026-09-19
 ---
 1. Open the ticket first (Helpdesk > "Ticket ID" field > jump ➜) and confirm the URL/header shows {ticket_id} before editing - stale field values can send you to the wrong ticket.
    - TRAP: the "Ticket ID" field only accepts real ticket IDs. Typing a {refund_id} or {invoice_number} into it to "find" the ticket fails ("No such ticket") - always re-type the actual {ticket_id}.

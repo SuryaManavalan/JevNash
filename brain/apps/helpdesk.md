@@ -4,9 +4,9 @@ description: Navigating the Helpdesk ticket list - finding tickets by ID, openin
 type: app-map
 apps: [helpdesk]
 status: verified
-wins: 36
+wins: 37
 losses: 2
-last_verified: 2026-09-18
+last_verified: 2026-09-19
 ---
 1. Dismiss "What's new" dialog if shown (Maybe later).
 2. Click "Helpdesk" workspace tab. Ticket list is paginated (Page 1/2/3...).
