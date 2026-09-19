@@ -4,7 +4,7 @@ description: Issue a refund in Billing for a customer's invoice and log it on a 
 type: workflow
 apps: [billing, helpdesk, crm]
 status: verified
-wins: 21
+wins: 22
 losses: 0
 last_verified: 2026-09-19
 ---

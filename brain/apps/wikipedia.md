@@ -4,6 +4,9 @@ description: Navigating Wikipedia search to open an article and read infobox fac
 type: app-map
 apps: [wikipedia]
 status: candidate
+wins: 1
+losses: 0
+last_verified: 2026-09-19
 ---
 1. On wiki/Main_Page, type the article title into the "Search Wikipedia" box.
 2. Submitting via the search button click can TimeoutError/fail to register (unconfirmed cause), but the search often still navigates to the article page (wiki/{Article_Title}) anyway — check the resulting url/page before retrying the click.

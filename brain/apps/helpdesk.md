@@ -4,7 +4,7 @@ description: Navigating the Helpdesk ticket list - finding tickets by ID, openin
 type: app-map
 apps: [helpdesk]
 status: verified
-wins: 37
+wins: 38
 losses: 2
 last_verified: 2026-09-19
 ---

@@ -3,8 +3,8 @@ name: mdn
 description: MDN Web Docs navigation. Covers finding the site search box and reaching reference pages. Load for tasks that search MDN or read API reference pages.
 type: app-map
 apps: [mdn]
-status: candidate
-wins: 1
+status: verified
+wins: 2
 losses: 0
 last_verified: 2026-09-19
 ---
