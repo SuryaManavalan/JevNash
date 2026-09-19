@@ -17,5 +17,7 @@ ENVS = {
     "web_form": _browser("OrderFormEnv"),
     "web_canvas": _browser("CanvasGameEnv"),  # pixel-only board, read via LlamaParse
     "web_race": _browser("WikiRaceEnv"),
+    "suite": _browser("SuiteEnv"),  # enterprise workstreams across four awkward web apps
+    "paint": _browser("PaintEnv"),  # replicate a picture in a style with an MS-Paint-like app
     "web_open": _browser("OpenWebEnv"),  # any site: --task "..." --url ... [--inputs a,b]
 }

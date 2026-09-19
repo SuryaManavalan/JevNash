@@ -1,0 +1,85 @@
+<!doctype html><meta charset="utf-8"><title>Paintbox</title>
+<style>
+body{font:14px system-ui;margin:0;background:#c0c7d1;color:#111}
+#bar{background:#e9edf2;border-bottom:2px solid #8b96a5;padding:6px 10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+#bar button{width:34px;height:30px;font-size:16px;border:1px solid #6d7887;background:#fff;cursor:pointer;border-radius:4px}
+#bar button.on{outline:3px solid #1d5fd6;background:#dbe7ff}
+#pal button{width:22px;height:22px;padding:0;border-radius:2px}
+#stat{padding:5px 12px;background:#fff8d6;border-bottom:1px solid #c9b458;font-family:ui-monospace,monospace}
+#work{display:flex;gap:26px;padding:16px}
+.frame{position:relative;width:448px;height:448px;background:#fff;box-shadow:0 2px 10px #0005}
+canvas{width:448px;height:448px;display:block;image-rendering:pixelated}
+#grid{position:absolute;inset:0;display:grid}
+#grid button{border:0;background:none;padding:0;cursor:crosshair;font-size:0}
+#grid button:hover{outline:1px solid #0006}
+h4{margin:0 0 6px}
+</style>
+<div id="bar">
+  <span id="tools"></span><span id="sizes"></span><span id="pal"></span>
+  <span><button id="undo" title="Undo last stroke">↶</button><button id="clear" title="Clear the whole canvas">🗑</button></span>
+</div>
+<div id="stat"></div>
+<div id="work">
+  <div><h4>Your canvas</h4><div class="frame"><canvas id="c" width="224" height="224"></canvas><div id="grid"></div></div></div>
+  <div><h4>Reference</h4><div class="frame"><canvas id="ref" width="224" height="224"></canvas></div></div>
+</div>
+<script>
+const P=new URLSearchParams(location.search), N=+P.get('grid')||16, SCENE=P.get('scene')||'sunset', W=224, CELL=W/N;
+const COLORS={white:'#ffffff',black:'#111111','dark gray':'#555555',gray:'#9a9a9a','light gray':'#d4d4d4',red:'#d62828','dark red':'#7f1d1d',
+ orange:'#f77f00',yellow:'#fcd116','pale yellow':'#fff3b0',green:'#2a9d3a','dark green':'#14532d','light green':'#9be28f',teal:'#1f8a8a',
+ 'sky blue':'#7ec8f2',blue:'#1d5fd6',navy:'#14213d',purple:'#7b2cbf',pink:'#ff8fab',magenta:'#c9184a',brown:'#7f4f24',tan:'#d4a373',
+ peach:'#ffd6a5',cream:'#fefae0'};
+const TOOLS={pencil:['✏️','Pencil: paint one spot'],line:['╱','Line: click start cell, then end cell'],rect:['▬','Filled box: click one corner cell, then the opposite corner'],
+ ellipse:['⬤','Filled oval: click one corner of its bounding box, then the opposite corner'],fill:['🪣','Bucket: flood-fill the area under the clicked cell']};
+const SIZES={S:['·','Thin stroke',1],M:['•','Medium stroke',2],L:['●','Thick stroke',4]};
+const S={tool:'pencil',color:'black',size:'M',first:null,undo:[]}, c=document.getElementById('c'), x=c.getContext('2d',{willReadFrequently:true});
+// cells are named row-letter + column-number: A1 is top-left
+const rowName=r=>r<26?String.fromCharCode(65+r):'A'+String.fromCharCode(65+r-26);
+const cell=(r,k)=>rowName(r)+(k+1);
+function ui(){for(const b of document.querySelectorAll('#tools button'))b.className=b.dataset.k==S.tool?'on':'';
+ for(const b of document.querySelectorAll('#sizes button'))b.className=b.dataset.k==S.size?'on':'';
+ for(const b of document.querySelectorAll('#pal button'))b.className=b.dataset.k==S.color?'on':'';
+ stat.textContent=`Tool: ${S.tool} · Color: ${S.color} · Stroke: ${S.size} · `+(S.first?`First point set at cell ${cell(...S.first)} - click the second cell`:'No point pending')+` · Strokes drawn: ${S.undo.length}`}
+function mk(parent,k,label,title,fn,bg){const b=document.createElement('button');b.dataset.k=k;b.textContent=label;b.title=title;b.setAttribute('aria-label',title);
+ if(bg)b.style.background=bg;b.onclick=()=>{fn();ui()};parent.appendChild(b)}
+for(const k in TOOLS)mk(tools,k,TOOLS[k][0],TOOLS[k][1],()=>{S.tool=k;S.first=null});
+for(const k in SIZES)mk(sizes,k,SIZES[k][0],SIZES[k][1],()=>S.size=k);
+for(const k in COLORS)mk(pal,k,'',`Color: ${k}`,()=>S.color=k,COLORS[k]);
+undo.onclick=()=>{const d=S.undo.pop();if(d)x.putImageData(d,0,0);S.first=null;ui()};
+clear.onclick=()=>{snap();x.fillStyle='#fff';x.fillRect(0,0,W,W);S.first=null;ui()};
+function snap(){S.undo.push(x.getImageData(0,0,W,W));if(S.undo.length>60)S.undo.shift()}
+const mid=(r,k)=>[k*CELL+CELL/2,r*CELL+CELL/2];
+function flood(px,py,hex){const d=x.getImageData(0,0,W,W),a=d.data,i0=(py*W+px)*4,t=[a[i0],a[i0+1],a[i0+2]],n=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
+ if(t.every((v,i)=>Math.abs(v-n[i])<8))return;const st=[[px,py]];while(st.length){const [u,v]=st.pop();if(u<0||v<0||u>=W||v>=W)continue;const i=(v*W+u)*4;
+  if(Math.abs(a[i]-t[0])>40||Math.abs(a[i+1]-t[1])>40||Math.abs(a[i+2]-t[2])>40)continue;a[i]=n[0];a[i+1]=n[1];a[i+2]=n[2];a[i+3]=255;st.push([u+1,v],[u-1,v],[u,v+1],[u,v-1])}x.putImageData(d,0,0)}
+function click(r,k){const col=COLORS[S.color],w=SIZES[S.size][2]*CELL/2;x.fillStyle=x.strokeStyle=col;
+ if(S.tool=='pencil'){snap();const [mx,my]=mid(r,k);x.beginPath();x.arc(mx,my,Math.max(CELL/2,w),0,7);x.fill()}
+ else if(S.tool=='fill'){snap();const [mx,my]=mid(r,k);flood(mx|0,my|0,col)}
+ else if(!S.first)S.first=[r,k];
+ else{snap();const [r0,k0]=S.first;S.first=null;const x0=Math.min(k0,k)*CELL,y0=Math.min(r0,r)*CELL,ww=(Math.abs(k-k0)+1)*CELL,hh=(Math.abs(r-r0)+1)*CELL;
+  if(S.tool=='rect')x.fillRect(x0,y0,ww,hh);
+  else if(S.tool=='ellipse'){x.beginPath();x.ellipse(x0+ww/2,y0+hh/2,ww/2,hh/2,0,0,7);x.fill()}
+  else{x.lineWidth=Math.max(2,w);x.lineCap='round';x.beginPath();x.moveTo(...mid(r0,k0));x.lineTo(...mid(r,k));x.stroke()}}}
+grid.style.gridTemplateColumns=`repeat(${N},1fr)`;
+for(let r=0;r<N;r++)for(let k=0;k<N;k++){const b=document.createElement('button');b.title='cell '+cell(r,k);b.setAttribute('aria-label','cell '+cell(r,k));
+ b.onclick=()=>{click(r,k);ui()};grid.appendChild(b)}
+x.fillStyle='#fff';x.fillRect(0,0,W,W);
+// ---- reference scenes (gradients and soft shapes so they are not trivially flat) ----
+const g=document.getElementById('ref').getContext('2d',{willReadFrequently:true});
+function grad(y0,y1,a,b){const q=g.createLinearGradient(0,y0,0,y1);q.addColorStop(0,a);q.addColorStop(1,b);return q}
+const SCENES={
+ sunset(){g.fillStyle=grad(0,150,'#14213d','#f77f00');g.fillRect(0,0,W,150);g.fillStyle='#fcd116';g.beginPath();g.arc(112,128,30,0,7);g.fill();
+  g.fillStyle=grad(150,W,'#1f8a8a','#14213d');g.fillRect(0,150,W,74);g.fillStyle='#14532d';g.beginPath();g.moveTo(0,150);g.quadraticCurveTo(60,95,125,150);g.fill();
+  g.beginPath();g.moveTo(110,150);g.quadraticCurveTo(180,110,W,150);g.fill()},
+ house(){g.fillStyle=grad(0,140,'#7ec8f2','#fefae0');g.fillRect(0,0,W,140);g.fillStyle=grad(140,W,'#2a9d3a','#14532d');g.fillRect(0,140,W,84);
+  g.fillStyle='#d4a373';g.fillRect(62,98,100,84);g.fillStyle='#7f1d1d';g.beginPath();g.moveTo(50,100);g.lineTo(112,48);g.lineTo(174,100);g.fill();
+  g.fillStyle='#7f4f24';g.fillRect(100,134,26,48);g.fillStyle='#7ec8f2';g.fillRect(72,112,22,20);g.fillRect(132,112,22,20);g.fillStyle='#fcd116';g.beginPath();g.arc(186,34,18,0,7);g.fill()},
+ portrait(){g.fillStyle=grad(0,W,'#7b2cbf','#14213d');g.fillRect(0,0,W,W);g.fillStyle='#1d5fd6';g.fillRect(52,176,120,48);g.fillStyle='#7f4f24';g.beginPath();g.ellipse(112,96,62,70,0,0,7);g.fill();
+  g.fillStyle='#ffd6a5';g.beginPath();g.ellipse(112,108,46,56,0,0,7);g.fill();g.fillStyle='#111';g.beginPath();g.arc(94,100,5,0,7);g.arc(130,100,5,0,7);g.fill();
+  g.strokeStyle='#c9184a';g.lineWidth=4;g.beginPath();g.arc(112,126,16,.2,2.94);g.stroke()}};
+(SCENES[SCENE]||SCENES.sunset)();
+// exports for the harness: small RGB thumbnails of both pictures
+window.thumb=(id,n)=>{const s=document.getElementById(id),t=document.createElement('canvas');t.width=t.height=n;const q=t.getContext('2d');q.drawImage(s,0,0,n,n);
+ return Array.from(q.getImageData(0,0,n,n).data).filter((_,i)=>i%4!=3)};
+window.palette=COLORS;ui();
+</script>

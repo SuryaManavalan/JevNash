@@ -19,9 +19,16 @@ SCAN_JS = """
 () => {
   document.querySelectorAll('[data-jev]').forEach(e => e.removeAttribute('data-jev'));
   const out = []; const seen = new Set(); let i = 0;
+  // A large fixed layer over the middle of the viewport is a modal: only its contents are usable.
+  let blocker = null;
+  for (let n = document.elementFromPoint(innerWidth / 2, innerHeight / 2); n && n !== document.body; n = n.parentElement) {
+    const s = getComputedStyle(n), b = n.getBoundingClientRect();
+    if (s.position === 'fixed' && !n.closest('#jev-layer') && b.width * b.height > innerWidth * innerHeight * 0.3) blocker = n;
+  }
   const sel = 'a[href], button, input, select, textarea, [role=button], [role=link], [onclick]';
   for (const el of document.querySelectorAll(sel)) {
     if (el.closest('#jev-layer')) continue;
+    if (blocker && !blocker.contains(el)) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4 || el.disabled) continue;
     const st = getComputedStyle(el);
@@ -29,11 +36,16 @@ SCAN_JS = """
     const tag = el.tagName.toLowerCase();
     let text = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label')
                 || el.title || el.name || '').trim().replace(/\\s+/g, ' ').slice(0, 70);
+    const named = el.getAttribute('aria-label') || el.title;
+    if (named && [...text].length <= 2) text = named.slice(0, 70);  // icon-only control: use its accessible name
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       const lab = el.labels && el.labels[0] ? el.labels[0].innerText.trim() : '';
       text = (lab || el.placeholder || el.name || el.id || text).slice(0, 70);
     }
     if (!text) continue;
+    const row = el.closest('tr, li');
+    if (row && tag !== 'input' && tag !== 'select' && tag !== 'textarea')
+      text += ' (in row: ' + row.innerText.trim().replace(/\\s+/g, ' ').slice(0, 70) + ')';
     const key = tag === 'a' ? 'a|' + el.href.split('#')[0] : tag + '|' + text + '|' + i;
     if (seen.has(key)) continue; seen.add(key);
     el.setAttribute('data-jev', i);
@@ -105,6 +117,9 @@ class BrowserEnv(GameEnv):
 
     max_steps = 12
     vision = False  # True: add a LlamaParse reading of the rendered page to every observation
+    harvest = False  # True: IDs, amounts, emails and phones seen on visited pages become typeable
+    can_finish = False  # True: the agent decides when it is done
+    text_budget = 900
 
     def __init__(self, seed: int | None = None, headed: bool = False):
         self.rng = random.Random(seed)
@@ -127,6 +142,7 @@ class BrowserEnv(GameEnv):
     def reset(self) -> None:
         self.task, url, self.inputs = self.new_task()
         self.steps, self.finished, self.message = 0, False, "Task started."
+        self.pool: list[str] = list(self.inputs)
         self.page.goto(url, wait_until="domcontentloaded")
         self._snap()
 
@@ -139,8 +155,19 @@ class BrowserEnv(GameEnv):
         except Exception:
             pass
 
+    VALUE_RE = re.compile(r"[A-Z]{1,4}-\d{3,6}|\d+\.\d{2}|[\w.]+@[\w.]+\.\w+|\b\d{3}-\d{4}\b|\b\d{1,6}\b")
+
     def observe(self) -> dict[str, Any]:
-        text = self.page.evaluate("() => (document.querySelector('main, #content, body').innerText || '')")
+        # A modal's text comes first: it is what the user is actually looking at.
+        text = self.page.evaluate("""() => { const d = document.querySelector('[role=dialog]');
+            const m = document.querySelector('main, #content, body');
+            return (d ? 'DIALOG: ' + d.innerText + ' | PAGE BEHIND: ' : '') + (m.innerText || '') }""")
+        if self.harvest:
+            for v in self.VALUE_RE.findall(self.task + " " + text):
+                if v in self.pool:
+                    self.pool.remove(v)
+                self.pool.append(v)  # most recently seen last
+            self.pool = self.pool[-150:]
         seen = {}
         if self.vision and perception.available():
             # Hide the agent's own overlays so they are not read back as part of the world.
@@ -153,7 +180,7 @@ class BrowserEnv(GameEnv):
             "task": self.task,
             "url": self.page.url,
             "page_title": self.page.title(),
-            "page_text_excerpt": re.sub(r"\s+", " ", text)[:900],
+            "page_text_excerpt": re.sub(r"\s+", " ", text)[:self.text_budget],
             "form_state": [
                 {"field": e["text"], "value": e["value"]} if e["type"] not in ("checkbox", "radio")
                 else {"field": e["text"], "checked": e["checked"]}
@@ -172,11 +199,19 @@ class BrowserEnv(GameEnv):
                 actions += [f'select [{e["i"]}] {e["text"]} = "{o}"' for o in e["options"]]
             elif e["tag"] == "textarea" or (e["tag"] == "input" and e["type"] in (
                     "text", "search", "email", "tel", "url", "number", "")):
-                actions += [f'type [{e["i"]}] {e["text"]} = "{s}"' for s in self.inputs]
+                if self.harvest:  # two-stage: choose the field now, the value in a second Choice
+                    actions.append(f'type [{e["i"]}] {e["text"]} = ?')
+                else:
+                    actions += [f'type [{e["i"]}] {e["text"]} = "{s}"' for s in self.pool if s != e["value"]]
             else:
                 state = " (checked)" if e["checked"] else ""
                 actions.append(f'click [{e["i"]}] {e["text"]}{state}')
+        if self.can_finish:
+            actions.append("finish: the whole task is complete, stop here")
         return actions
+
+    def value_candidates(self) -> list[str]:
+        return list(reversed(self.pool))  # most recently seen first
 
     def render(self) -> dict[str, Any]:
         return {"kind": "browser", "url": self.page.url, "task": self.task}
@@ -200,6 +235,9 @@ class BrowserEnv(GameEnv):
 
     def step(self, action: str) -> dict[str, Any]:
         self.steps += 1
+        if action.startswith("finish"):
+            self.finished, self.message = True, "Agent declared the task complete."
+            return {}
         m = ACTION_RE.match(action)
         info: dict[str, Any] = {}
         try:
@@ -344,3 +382,128 @@ class CanvasGameEnv(BrowserEnv):
 
     def outcome(self) -> float:
         return {"win": 1.0, "draw": 0.5}.get(self.page.evaluate("() => window.__result || null"), 0.0)
+
+
+class SuiteEnv(BrowserEnv):
+    """Enterprise workstreams across the Acme Suite (see jevnash/playground). The agent must say
+    when it is finished; the score is the fraction of task checks that hold, zero if it did harm."""
+
+    max_steps = 60
+    text_budget = 2200
+    harvest = True
+    can_finish = True
+
+    def __init__(self, family: str | None = None, **kw):
+        from ..playground.suite import Suite
+
+        self.suite, self.family, self.episode_no = Suite(), family, 0
+        super().__init__(**kw)
+
+    def new_task(self):
+        from ..playground.tasks import FAMILIES
+
+        names = [self.family] if self.family else list(FAMILIES)
+        self.task_family = names[self.episode_no % len(names)]
+        self.episode_no += 1
+        world = self.suite.reset(self.rng.randint(0, 10**9))
+        text, self.checks = FAMILIES[self.task_family](world)
+        return text, f"http://127.0.0.1:{self.suite.port}/", []
+
+    def report(self) -> dict[str, bool]:
+        return {name: bool(fn(self.suite.world)) for name, fn in self.checks}
+
+    def succeeded(self) -> bool:
+        return False  # only the agent's own "finish" or the step cap ends an episode
+
+    def outcome(self) -> float:
+        r = self.report()
+        if not all(ok for name, ok in r.items() if name.startswith("harm")):
+            return 0.0
+        work = [ok for name, ok in r.items() if not name.startswith("harm")]
+        return sum(work) / len(work)
+
+
+class PaintEnv(BrowserEnv):
+    """Drawing challenge: replicate a reference picture in a given style with an MS-Paint-like app.
+    The adapter is the quantisation layer: the canvas is addressed as named cells, the reference is
+    described to the planner as a grid of palette colours, and the score is pixel similarity."""
+
+    can_finish = True
+    text_budget = 400
+    STYLES = {
+        "pixel-art": (16, 40, "Pixel art: flat colours only, everything snapped to whole cells, built from filled boxes and single pencil cells. No gradients."),
+        "anime": (16, 45, "Anime / cel style: large flat colour regions with clean shapes (ovals, boxes), then thin black or dark outlines drawn with the line tool around the main shapes."),
+        "photo-realistic": (32, 90, "Photo-realistic: approximate smooth gradients with several bands of neighbouring shades, soften edges, add highlights and shadows. Fidelity to the reference matters most."),
+    }
+    SCENES = ["sunset", "house", "portrait"]
+
+    def __init__(self, style: str | None = None, scene: str | None = None, **kw):
+        self.only_style, self.only_scene, self.episode_no, self.cells = style, scene, 0, set()
+        super().__init__(**kw)
+
+    def new_task(self):
+        styles = [self.only_style] if self.only_style else list(self.STYLES)
+        self.style = styles[self.episode_no % len(styles)]
+        self.scene = self.only_scene or self.SCENES[(self.episode_no // len(styles)) % len(self.SCENES)]
+        self.episode_no += 1
+        self.grid, self.max_prims, _ = self.STYLES[self.style]
+        self.max_steps = self.max_prims * 5 + 10
+        self.cells = set()
+        url = (Path(__file__).parent / "webtasks" / "paint.html").as_uri() + f"?grid={self.grid}&scene={self.scene}"
+        return f"Replicate the reference picture on your canvas in {self.style} style, then finish.", url, []
+
+    def briefing_material(self) -> str:
+        n = self.grid
+        rgb, pal = self.page.evaluate(f"() => [thumb('ref', {n}), palette]")
+        pal = {k: tuple(int(v[i:i + 2], 16) for i in (1, 3, 5)) for k, v in pal.items()}
+        rows = []
+        for r in range(n):
+            names = [min(pal, key=lambda k: sum((a - b) ** 2 for a, b in zip(pal[k], rgb[(r * n + c) * 3:(r * n + c) * 3 + 3])))
+                     for c in range(n)]
+            runs, start = [], 0
+            for c in range(1, n + 1):  # run-length encode each row
+                if c == n or names[c] != names[start]:
+                    runs.append(f"{names[start]} {start + 1}-{c}" if c - start > 1 else f"{names[start]} {c}")
+                    start = c
+            row = chr(65 + r) if r < 26 else "A" + chr(65 + r - 26)
+            rows.append(f"{row}: " + ", ".join(runs))
+        return (f"DRAWING TASK MATERIAL\nStyle: {self.STYLES[self.style][2]}\n"
+                f"Canvas: {n}x{n} cells, rows A.. top to bottom, columns 1..{n} left to right; cell \"C4\" = row C, column 4.\n"
+                f"Tools: pencil (one cell), line (two cells), rect = filled box (two corner cells), ellipse = filled oval inside the box "
+                f"given by two corner cells, fill = bucket. Stroke sizes S/M/L. Colours: {', '.join(pal)}.\n"
+                f"Plan limit: at most {self.max_prims} subgoals (this overrides the usual limit). Each subgoal is ONE stroke, written exactly as: "
+                f"Draw <tool> in colour \"<colour>\" from cell \"<cell>\" to cell \"<cell>\" (pencil/fill: at cell \"<cell>\"). "
+                f"Paint large background areas first, details last. replan_after must be null.\n"
+                f"Reference picture as nearest palette colour per cell (row: colour columns):\n" + "\n".join(rows))
+
+    def plan_progress(self) -> int:
+        """One plan subgoal = one stroke, and the app counts strokes."""
+        m = re.search(r"Strokes drawn: (\d+)", self.page.inner_text("#stat"))
+        return int(m.group(1)) if m else 0
+
+    def focus(self, subgoal: str) -> None:
+        self.cells = set(re.findall(r'"([A-Z]{1,2}\d{1,2})"', subgoal))
+
+    def legal_actions(self) -> list[str]:
+        keep = []
+        for a in super().legal_actions():
+            m = re.search(r"\] cell ([A-Z]{1,2}\d{1,2})$", a)
+            if not m or m.group(1) in self.cells:  # only the cells the current stroke names stay on the menu
+                keep.append(a)
+        return keep
+
+    def similarity(self) -> float:
+        mine, ref = self.page.evaluate("() => [thumb('c', 32), thumb('ref', 32)]")
+        err = sum(abs(a - b) for a, b in zip(mine, ref))
+        blank = sum(abs(255 - b) for b in ref)
+        return max(0.0, 1 - err / blank)
+
+    def report(self) -> dict[str, bool]:
+        s = self.similarity()
+        return {f"similarity {s:.2f} >= {t}": s >= t for t in (0.5, 0.7, 0.85)}
+
+    def succeeded(self) -> bool:
+        return False
+
+    def outcome(self) -> float:
+        return round(self.similarity(), 3)
