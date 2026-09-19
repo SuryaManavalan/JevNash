@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Jev Brain</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#050b12;--panel:#0a1622;--line:#15314a;--ink:#d7f3ff;--dim:#6f93ab;--jev:#39ffd0;--llm:#ff7ad9;
+  --cache:#ffd166;--warn:#ff5d5d;--model:#8ab4ff}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:radial-gradient(1200px 700px at 50% -10%,#0d2236 0,var(--bg) 60%);color:var(--ink);
+  font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;display:flex;flex-direction:column}
+header{display:flex;gap:18px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line)}
+header h1{font-size:14px;margin:0;letter-spacing:.18em;color:var(--jev);text-shadow:0 0 12px #39ffd088}
+#now{flex:1;font-size:15px;font-weight:600;padding:7px 14px;border-radius:9px;border:1px solid var(--line);
+  background:#07121c;transition:all .3s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#now.jev{border-color:var(--jev);box-shadow:0 0 18px #39ffd044}#now.llm{border-color:var(--llm);box-shadow:0 0 18px #ff7ad955}
+#now.cache{border-color:var(--cache);box-shadow:0 0 18px #ffd16644}
+.meter{width:150px}.meter b{display:flex;justify-content:space-between;font-weight:400;color:var(--dim);font-size:11px}
+.bar{height:6px;border-radius:4px;background:#10283b;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--jev);transition:width .6s}
+main{flex:1;display:grid;grid-template-columns:minmax(360px,1.25fr) minmax(380px,1.1fr) minmax(300px,.9fr);gap:12px;padding:12px;min-height:0}
+.col{display:flex;flex-direction:column;gap:12px;min-height:0}
+.panel{background:linear-gradient(180deg,#0c1b2a,var(--panel));border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-height:0}
+.panel h2{margin:0 0 8px;font-size:11px;letter-spacing:.16em;color:var(--dim);font-weight:600;display:flex;justify-content:space-between}
+.grow{flex:1;overflow:auto}
+/* stage */
+#stage{position:relative;display:flex;align-items:center;justify-content:center;min-height:330px}
+#task{color:var(--dim);margin-bottom:8px;min-height:18px}
+.grid{display:grid;gap:8px;position:relative}
+.cell{width:92px;height:92px;border-radius:12px;border:1.5px solid var(--line);background:#07131e;display:flex;align-items:center;
+  justify-content:center;font-size:44px;font-weight:700;position:relative;transition:all .35s}
+.cell.X{color:var(--jev);text-shadow:0 0 16px #39ffd0aa}.cell.O{color:var(--llm);text-shadow:0 0 16px #ff7ad9aa}
+.cell .pct,.pile .pct{position:absolute;top:5px;left:7px;font-size:11px;font-weight:600;color:#bff}
+.chosen{animation:pulse .7s ease-in-out infinite alternate;border-color:var(--jev)!important}
+@keyframes pulse{from{box-shadow:0 0 6px 1px var(--jev)}to{box-shadow:0 0 28px 8px var(--jev),inset 0 0 18px #39ffd055}}
+#follow{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;pointer-events:none;z-index:5;left:20px;top:20px;
+  background:radial-gradient(circle,#fff 0 18%,var(--jev) 32%,#39ffd000 70%);box-shadow:0 0 24px 10px #39ffd0aa;
+  transition:left .55s cubic-bezier(.2,.8,.2,1),top .55s cubic-bezier(.2,.8,.2,1)}
+.piles{display:flex;gap:26px;align-items:flex-end;height:280px;position:relative}
+.pile{display:flex;flex-direction:column-reverse;gap:6px;align-items:center;padding:24px 12px 8px;border-radius:12px;border:1.5px solid var(--line);
+  min-width:84px;min-height:70px;position:relative;transition:all .35s}
+.stone{width:56px;height:30px;border-radius:9px;background:linear-gradient(180deg,#5d86a6,#2c4a63);transition:all .35s}
+.stone.take{background:linear-gradient(180deg,#9bffe8,var(--jev));box-shadow:0 0 16px var(--jev)}
+#shot{max-width:100%;max-height:420px;border-radius:8px;border:1px solid var(--line);box-shadow:0 0 30px #39ffd022}
+pre.json{white-space:pre-wrap;color:var(--dim);margin:0;max-height:300px;overflow:auto}
+#result{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:40px;font-weight:800;letter-spacing:.1em;
+  background:#050b12cc;border-radius:10px;z-index:9}
+#log div{padding:3px 0;border-bottom:1px dashed #12283b;color:var(--dim)}#log div:first-child{color:var(--ink)}
+#log .jev{color:var(--jev)}#log .llm{color:var(--llm)}#log .cache{color:var(--cache)}#log .bad{color:var(--warn)}
+/* brain */
+svg text{fill:var(--ink);font:600 10.5px ui-monospace,monospace;text-anchor:middle;pointer-events:none}
+svg text.sub{fill:var(--dim);font-weight:400;font-size:9px}
+.edge{stroke:#1b3b57;stroke-width:1.5;fill:none}.edge.on{stroke:var(--c,#39ffd0);stroke-width:2.5;filter:drop-shadow(0 0 5px var(--c,#39ffd0))}
+.node circle{fill:#081623;stroke:#24506f;stroke-width:1.5;transition:all .3s}
+.node.on circle{stroke:var(--c);fill:#0d2a3a;filter:drop-shadow(0 0 12px var(--c))}
+.ring{fill:none;stroke-dasharray:6 10;opacity:.5}
+#fast{stroke:var(--jev);animation:spin 8s linear infinite;transform-origin:190px 185px}
+#slow{stroke:var(--llm);animation:spin 40s linear infinite reverse;transform-origin:260px 185px}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* options */
+.opt{display:grid;grid-template-columns:1fr 44px;gap:8px;align-items:center;margin:4px 0}
+.opt .t{position:relative;padding:3px 8px;border-radius:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border:1px solid transparent}
+.opt .t i{position:absolute;inset:0;width:0;background:linear-gradient(90deg,#39ffd044,#39ffd011);transition:width .5s;z-index:0}
+.opt .t span{position:relative}.opt.pick .t{border-color:var(--jev);box-shadow:0 0 12px #39ffd055}.opt .p{text-align:right;color:var(--dim)}
+#gauge{display:flex;gap:14px;align-items:center;margin-bottom:8px}#conf{font-size:30px;font-weight:800}
+.chip{padding:2px 8px;border-radius:20px;font-size:11px;border:1px solid currentColor}
+.spark{display:grid;grid-template-columns:96px 1fr 38px;align-items:center;gap:6px;margin:3px 0;color:var(--dim)}
+.spark svg{width:100%;height:22px}
+#heur li{margin:5px 0;transition:all 1s}#heur li.new{color:var(--jev);text-shadow:0 0 10px #39ffd0aa}#heur{padding-left:18px;margin:0}
+#stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center}#stats b{display:block;font-size:17px;color:var(--ink)}#stats span{color:var(--dim);font-size:10px}
+</style></head><body>
+<header>
+  <h1>JEV · BRAIN</h1>
+  <div id="now">Waiting for the harness…</div>
+  <div class="meter"><b><span>time</span><span id="tt">–</span></b><div class="bar"><i id="tb"></i></div></div>
+  <div class="meter"><b><span>spend</span><span id="st">–</span></b><div class="bar"><i id="sb" style="background:var(--llm)"></i></div></div>
+</header>
+<main>
+  <div class="col">
+    <div class="panel"><h2><span>STAGE · what the agent sees and does</span><span id="ep"></span></h2>
+      <div id="task"></div><div id="stage"><div id="result"></div></div></div>
+    <div class="panel grow"><h2>NARRATION</h2><div id="log"></div></div>
+  </div>
+  <div class="col">
+    <div class="panel"><h2><span>TWO-SPEED LOOP</span><span><span style="color:var(--jev)">● fast: Jev</span> &nbsp;<span style="color:var(--llm)">● slow: LLM</span> &nbsp;<span style="color:var(--cache)">● cache</span></span></h2>
+      <svg id="brain" viewBox="0 0 520 370"></svg></div>
+    <div class="panel"><h2>LEARNING CURVE · outcome per episode (line = moving average, dashed = random agent)</h2>
+      <svg id="curve" viewBox="0 0 520 130" style="width:100%"></svg>
+      <div id="stats"></div></div>
+  </div>
+  <div class="col">
+    <div class="panel"><h2><span>DECISION</span><span id="nopt"></span></h2>
+      <div id="gauge"><div id="conf">–</div><div><div id="src"></div><div id="why" style="color:var(--dim);margin-top:4px"></div></div></div>
+      <div id="opts"></div></div>
+    <div class="panel"><h2>SELF-EVALUATION · asked every tick, feeds the value model</h2><div id="sparks"></div></div>
+    <div class="panel grow"><h2><span>LEARNED HEURISTICS · written into Jev's criteria</span><span id="goal"></span></h2><ol id="heur"></ol></div>
+  </div>
+</main>
+<script>
+const $=s=>document.querySelector(s), NS='http://www.w3.org/2000/svg';
+const C={jev:'#39ffd0',llm:'#ff7ad9',cache:'#ffd166',model:'#8ab4ff'};
+// ---------- brain graph ----------
+const N={env:[60,185,'WORLD','observe'],menu:[170,85,'MENU','enumerate options'],jev:[300,185,'JEV','fast choice + scores'],
+  act:[170,285,'ACT','step + log'],cache:[300,50,'CACHE','seen before'],llm:[450,100,'LLM','System 2 / rulebook'],
+  model:[450,270,'GAME MODEL','goal · rules · heuristics'],value:[300,325,'VALUE','learned from outcomes']};
+const E=[['env','menu'],['menu','jev'],['jev','act'],['act','env'],['menu','cache'],['cache','act'],['jev','llm'],['llm','act'],
+  ['llm','model'],['model','menu'],['act','value'],['act','llm'],['model','jev']];
+const brain=$('#brain');
+brain.innerHTML=`<circle id="fast" class="ring" cx="190" cy="185" r="150"/><circle id="slow" class="ring" cx="260" cy="185" r="178"/>`;
+const mk=(t,a,p=brain)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p.appendChild(e);return e};
+for(const [a,b] of E){const [x1,y1]=N[a],[x2,y2]=N[b];const mx=(x1+x2)/2+(y2-y1)*.12,my=(y1+y2)/2-(x2-x1)*.12;
+  mk('path',{id:`e-${a}-${b}`,class:'edge',d:`M${x1},${y1} Q${mx},${my} ${x2},${y2}`})}
+for(const k in N){const [x,y,t,s]=N[k];const g=mk('g',{id:'n-'+k,class:'node'});mk('circle',{cx:x,cy:y,r:k=='jev'?34:28},g);
+  mk('text',{x,y:y+1},g).textContent=t;mk('text',{x,y:y+(k=='jev'?50:44),class:'sub'},g).textContent=s}
+function flow(path,color,delay=0){path.forEach(([a,b],i)=>setTimeout(()=>{
+  const e=$(`#e-${a}-${b}`),na=$('#n-'+a),nb=$('#n-'+b);if(!e)return;
+  for(const el of[e,na,nb]){el.style.setProperty('--c',color);el.classList.add('on')}
+  const dot=mk('circle',{r:5,fill:color,style:`filter:drop-shadow(0 0 8px ${color})`});
+  const m=mk('animateMotion',{dur:'0.45s',fill:'freeze',path:e.getAttribute('d')},dot);m.beginElement();
+  setTimeout(()=>{dot.remove();e.classList.remove('on');na.classList.remove('on')},470);
+  setTimeout(()=>nb.classList.remove('on'),900)},delay+i*430))}
+function hold(node,color,on){const n=$('#n-'+node);n.style.setProperty('--c',color);n.classList.toggle('on',on);n.dataset.hold=on?1:''}
+// ---------- narration ----------
+function say(text,cls=''){const n=$('#now');n.textContent=text;n.className=cls;
+  const d=document.createElement('div');d.className=cls;d.textContent=new Date().toLocaleTimeString()+'  '+text;$('#log').prepend(d);
+  while($('#log').children.length>80)$('#log').lastChild.remove()}
+// ---------- stage ----------
+let follow;
+function stage(view,obs,probs={},chosen=null){
+  const st=$('#stage');[...st.children].forEach(c=>{if(c.id!='result')c.remove()});
+  $('#task').textContent=view.task?('TASK: '+view.task):(obs&&obs.message||'');
+  const P=Object.fromEntries(probs.length?probs:[]);let target=null;
+  if(view.kind=='grid'){const g=document.createElement('div');g.className='grid';g.style.gridTemplateColumns=`repeat(${view.cells[0].length},92px)`;
+    const at={};for(const a in view.targets)at[view.targets[a].join()]=a;
+    view.cells.forEach((row,r)=>row.forEach((v,c)=>{const d=document.createElement('div');d.className='cell '+v;d.textContent=v=='.'?'':v;
+      const a=at[r+','+c];if(a&&a in P){const p=P[a];d.style.background=`rgba(57,255,208,${.04+.5*p})`;d.style.borderColor=`rgba(57,255,208,${.25+.75*p})`;
+        d.innerHTML+=`<span class="pct">${Math.round(p*100)}%</span>`}
+      if(a&&a==chosen){d.classList.add('chosen');target=d}g.appendChild(d)}));st.appendChild(g)}
+  else if(view.kind=='piles'){const w=document.createElement('div');w.className='piles';
+    const byPile={};for(const a in view.targets){const [i,n]=view.targets[a];(byPile[i]=byPile[i]||[]).push([P[a]||0,n,a])}
+    view.piles.forEach((size,i)=>{const d=document.createElement('div');d.className='pile';
+      const tot=(byPile[i]||[]).reduce((s,x)=>s+x[0],0);d.style.background=`rgba(57,255,208,${.03+.4*tot})`;d.style.borderColor=`rgba(57,255,208,${.2+.8*tot})`;
+      const pick=(byPile[i]||[]).find(x=>x[2]==chosen);
+      for(let k=0;k<size;k++){const s=document.createElement('div');s.className='stone'+(pick&&k>=size-pick[1]?' take':'');d.appendChild(s)}
+      if(tot>0)d.innerHTML+=`<span class="pct">${Math.round(tot*100)}%</span>`;
+      if(pick){d.classList.add('chosen');target=d}w.appendChild(d)});st.appendChild(w)}
+  else if(view.kind=='browser'){const im=document.createElement('img');im.id='shot';im.src='/shot.jpg?'+Date.now();st.appendChild(im)}
+  else{const p=document.createElement('pre');p.className='json';p.textContent=JSON.stringify(obs,null,1);st.appendChild(p)}
+  if(view.kind!='browser'){follow=document.createElement('div');follow.id='follow';st.appendChild(follow);
+    const last=stage.last||[30,30];follow.style.left=last[0]+'px';follow.style.top=last[1]+'px';
+    if(target)requestAnimationFrame(()=>{const a=target.getBoundingClientRect(),b=st.getBoundingClientRect();
+      stage.last=[a.left-b.left+a.width/2,a.top-b.top+a.height/2];follow.style.left=stage.last[0]+'px';follow.style.top=stage.last[1]+'px'})}
+}
+// ---------- decision panel ----------
+function decision(e){
+  $('#conf').textContent=e.confidence.toFixed(2);$('#conf').style.color=e.confidence>=.5?C.jev:'#ffb04d';
+  const c=e.source=='cache'?C.cache:e.escalated?C.llm:C.jev;
+  $('#src').innerHTML=`<span class="chip" style="color:${c}">${e.source=='cache'?'replayed from cache · free':e.escalated?'escalated to LLM':'Jev decided'}</span>`;
+  $('#why').textContent=e.why?('LLM: '+e.why):(e.jev_action&&e.jev_action!=e.action?'Jev wanted: '+e.jev_action:'');
+  $('#nopt').textContent=e.n_options+' options';
+  $('#opts').innerHTML='';e.options.slice(0,9).forEach(([a,p])=>{const d=document.createElement('div');d.className='opt'+(a==e.action?' pick':'');
+    d.innerHTML=`<div class="t"><i></i><span></span></div><div class="p">${(p*100).toFixed(0)}%</div>`;d.querySelector('span').textContent=(a==e.action?'▶ ':'')+a;
+    $('#opts').appendChild(d);requestAnimationFrame(()=>d.querySelector('i').style.width=(p*100)+'%')})}
+const hist={};
+function sparks(scores,value){const all={...scores};if(value!=null)all['P(win) learned']=value;
+  for(const k in all){(hist[k]=hist[k]||[]).push(all[k]);if(hist[k].length>60)hist[k].shift()}
+  $('#sparks').innerHTML=Object.keys(hist).map(k=>{const h=hist[k],pts=h.map((v,i)=>`${i/(Math.max(h.length-1,1))*100},${21-v*20}`).join(' ');
+    const col=k.startsWith('P(')?C.model:k=='threat'?'#ff5d5d':C.jev;
+    return `<div class="spark"><span>${k}</span><svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg><span>${h.at(-1).toFixed(2)}</span></div>`}).join('')}
+// ---------- learning curve ----------
+let outcomes=[],baseline=null,sessionEps=0;
+function curve(){const s=$('#curve');s.innerHTML='';const n=outcomes.length;if(!n)return;const X=i=>10+(n<2?250:i/(n-1)*500),Y=v=>115-v*100;
+  if(baseline!=null){mk('line',{x1:10,x2:510,y1:Y(baseline),y2:Y(baseline),stroke:'#6f93ab','stroke-dasharray':'4 5'},s)}
+  outcomes.forEach((o,i)=>mk('circle',{cx:X(i),cy:Y(o),r:2.6,fill:o>=1?C.jev:o>0?C.cache:'#ff5d5d',opacity:.8},s));
+  const w=Math.min(10,n),ma=outcomes.map((_,i)=>{const a=outcomes.slice(Math.max(0,i-w+1),i+1);return a.reduce((x,y)=>x+y,0)/a.length});
+  mk('polyline',{points:ma.map((v,i)=>X(i)+','+Y(v)).join(' '),fill:'none',stroke:C.jev,'stroke-width':2,style:'filter:drop-shadow(0 0 5px #39ffd0)'},s);
+  const last=ma.at(-1);stat.mean=last.toFixed(2);stat.episodes=n;stats()}
+const stat={episodes:0,mean:'–','jev calls':0,'llm calls':0,'cache hits':0,'jev tokens':0,'$ / episode':'–','vs random':'–'};
+function stats(){if(baseline!=null&&stat.mean!='–')stat['vs random']=((+stat.mean-baseline)>=0?'+':'')+(+stat.mean-baseline).toFixed(2);
+  $('#stats').innerHTML=Object.entries(stat).map(([k,v])=>`<div><b>${v}</b><span>${k}</span></div>`).join('')}
+function model(m){$('#goal').textContent='';const known=new Set([...$('#heur').children].map(l=>l.textContent));const first=!known.size;
+  $('#heur').innerHTML='';(m.heuristics||[]).forEach(h=>{const li=document.createElement('li');li.textContent=h;
+    if(!first&&!known.has(h)){li.className='new';setTimeout(()=>li.className='',9000)}$('#heur').appendChild(li)})}
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+// ---------- events ----------
+const LLM_SAY={model:'LLM is writing the rulebook from raw observations (slow loop)…',revise:'Jev found contradictions — LLM is revising the rulebook…',
+  reflect:'LLM is reviewing the episode and rewriting heuristics…',escalate:'Jev was unsure — asking the LLM to think this move through…',enumerate:'LLM is listing possible actions…'};
+const H={
+  run_start(e){sessionEps=0;outcomes=e.past_outcomes||[];baseline=e.baseline;curve();stats();say(`Session started on “${e.env}” · ${e.minutes} min · $${e.usd} ceiling`)},
+  episode_start(e){$('#ep').textContent='episode '+e.n;$('#result').style.display='none';stage(e.view,e.observation);say('Episode '+e.n+' begins. The agent observes the world.')},
+  thinking(e){if(e.who=='jev'){flow([['env','menu'],['menu','jev']],C.jev);$('#now').className='jev';$('#now').textContent='Jev is choosing from the menu…'}},
+  tick(e){stage(e.view,e.observation,e.options,e.action);decision(e);sparks(e.scores,e.value_pred);
+    if(e.source=='cache'){flow([['env','menu'],['menu','cache'],['cache','act'],['act','env']],C.cache);say(`Seen this exact situation before → replaying “${e.action}” from cache (no model call).`,'cache')}
+    else if(e.escalated){flow([['llm','act'],['act','env']],C.llm);say(`LLM overruled/confirmed → “${e.action}”. ${e.why||''}`,'llm')}
+    else{flow([['jev','act'],['act','env']],C.jev);say(`Jev chose “${e.action}” with confidence ${e.confidence.toFixed(2)} out of ${e.n_options} options.`,'jev')}},
+  error(e){say(`LLM call failed during ${e.where}; continuing without it.`,'bad')},
+  run_end(e){say(`Session finished: ${e.episodes} episodes for $${e.spent}. Dashboard stays up until you stop the process.`)},
+  judge(e){say(`Jev judges the task ${(e.p_done*100).toFixed(0)}% likely complete.`,e.p_done>=.85?'jev':'')},
+  noop(e){say(`“${e.action}” changed nothing — removed from the menu for this situation.`,'bad')},
+  stuck(e){say('Dead end: no actions are available. Episode counted as a loss.','bad')},
+  shot(){const im=$('#shot');if(im)im.src='/shot.jpg?'+Date.now()},
+  llm_start(e){hold('llm',C.llm,true);if(e.purpose=='escalate')flow([['jev','llm']],C.llm);if(e.purpose=='reflect')flow([['act','llm']],C.llm);say(LLM_SAY[e.purpose]||('LLM: '+e.purpose),'llm')},
+  llm_end(e){hold('llm',C.llm,false);if(e.purpose!='escalate'&&e.purpose!='enumerate')flow([['llm','model'],['model','menu']],C.model);
+    say(`LLM finished “${e.purpose}” in ${e.secs}s ($${e.usd}).`,'llm')},
+  jev_call(e){stat['jev calls']++;stat['jev tokens']+=e.tokens;stats()},
+  slow_loop(e){if(e.phase=='start')say('Slow loop triggered: '+e.trigger.replace(/_/g,' '),'llm')},
+  model(e){model(e.model);$('#goal').textContent='';if(e.model.goal)say('Current belief about the goal: '+e.model.goal)},
+  reflect(e){if(e.new.length)say(`Learned ${e.new.length} new heuristic(s) — now written into Jev's option criteria.`,'llm');flow([['model','jev']],C.model,900)},
+  value_model(e){flow([['act','value']],C.model);},
+  episode_end(e){sessionEps++;outcomes.push(e.outcome);curve();stage(e.view,e.observation);const r=$('#result');const t=e.outcome>=1?['WIN',C.jev]:e.outcome>0?['DRAW',C.cache]:['LOSS','#ff5d5d'];
+    r.textContent=t[0];r.style.color=t[1];r.style.textShadow='0 0 30px '+t[1];r.style.display='flex';setTimeout(()=>r.style.display='none',1400);
+    say(`Episode ${e.n} ended: ${t[0]}.`,e.outcome>=1?'jev':e.outcome>0?'cache':'bad')},
+  budget(e){$('#tt').textContent=fmt(e.elapsed)+' / '+fmt(e.seconds);$('#tb').style.width=Math.min(100,e.elapsed/e.seconds*100)+'%';
+    $('#st').textContent='$'+e.spent.toFixed(3)+' / $'+e.usd;$('#sb').style.width=Math.min(100,e.spent/e.usd*100)+'%';
+    stat['llm calls']=e.llm_calls;stat['cache hits']=e.cache_hits;stat['jev calls']=e.jev_calls;stat['jev tokens']=e.jev_tokens;
+    if(sessionEps)stat['$ / episode']=(e.spent/sessionEps).toFixed(4);stats()},
+};
+stats();
+new EventSource('/events').onmessage=m=>{const e=JSON.parse(m.data);try{H[e.type]&&H[e.type](e)}catch(err){console.error(e.type,err)}};
+</script></body></html>
