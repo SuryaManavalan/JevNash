@@ -51,7 +51,8 @@ class JevPolicy:
         self.jev = jev
 
     def decide(
-        self, model: dict, observation: dict, history: list[dict], criteria: dict, keys: dict[str, str]
+        self, model: dict, observation: dict, history: list[dict], criteria: dict, keys: dict[str, str],
+        workstream: dict | None = None,
     ) -> Decision:
         state = {
             "game_model": {
@@ -59,22 +60,46 @@ class JevPolicy:
                 for k in ("goal", "heuristics", "win_signals", "lose_signals", "progress_signals")
             },
             "observation": observation,
-            "history_tail": history[-6:],
+            "history_tail": history[-8:],
         }
-        questions: dict[str, dict] = {
-            "move": {
-                "type": "choice",
-                "instructions": {
-                    "question": "Which action best advances the agent toward `game_model.goal` "
-                    "from `observation`?",
-                    "priority": "Apply `game_model.heuristics`. Take an immediate win if one "
-                    "exists; otherwise prevent an immediate loss.",
-                },
-                "criteria": criteria,
+        instructions = {
+            "question": "Which action best advances the agent toward `game_model.goal` from `observation`?",
+            "priority": "Apply `game_model.heuristics`. Take an immediate win if one exists; "
+            "otherwise prevent an immediate loss.",
+        }
+        if workstream:  # long tasks: the Librarian's plan and briefing steer every choice
+            state["workstream"] = workstream
+            instructions = {
+                "question": "Which single action should be taken next on this screen to carry out "
+                "`workstream.current_subgoal`?",
+                "guidance": "Follow `workstream.briefing`. Do not repeat an action in `history_tail` that "
+                "already succeeded.",
             }
-        }
-        for key, (instructions, levels) in SCORES.items():
-            questions[key] = {"type": "score", "instructions": instructions, "criteria": levels}
+        questions: dict[str, dict] = {"move": {"type": "choice", "instructions": instructions, "criteria": criteria}}
+        if workstream and "plan" in workstream:
+            # Static plan: progress is a Choice over the visible window of the plan.
+            questions["progress"] = {
+                "type": "choice",
+                "instructions": "Judging by `observation` and `history_tail`, which subgoal of `workstream.plan` is the "
+                "next one that still has to be done?",
+                "criteria": {f"s{i}": {"subgoal": sg, "means": "everything before this is finished; this is not"}
+                             for i, sg in enumerate(workstream["plan"])},
+            }
+        elif workstream:
+            questions["subgoal_done"] = {
+                "type": "noul",
+                "instructions": "Judging by `observation` and `history_tail`, has `workstream.current_subgoal` "
+                "already been fully accomplished?",
+                "criteria": {"true": "The screen or the last result confirms it", "false": "It still needs an action"},
+            }
+            questions["noteworthy"] = {
+                "type": "noul",
+                "instructions": "Does `observation.page_text_excerpt` show specific facts (ids, amounts, names, "
+                "statuses, table rows) that `observation.task` needs and that are not yet in `workstream.notes`?",
+            }
+        if not workstream:  # self-evaluation feeds the value model; workstreams are scored by their checks
+            for key, (text, levels) in SCORES.items():
+                questions[key] = {"type": "score", "instructions": text, "criteria": levels}
         # More than one Choice can hold: fan the menu out into parallel chunk Choices in the same
         # call, then run a final Choice over each chunk's best few (beam over joint probability).
         items = [(k, v) for k, v in criteria.items() if k != "other"]
@@ -101,9 +126,30 @@ class JevPolicy:
             action=action,
             confidence=move["confidence"],
             probabilities=probs,
-            scores={k: ans[k]["score"] / (len(SCORES[k][1]) - 1) for k in SCORES},
-            extras={"other_p": move["probabilities"].get("other", 0.0)},
+            scores={k: ans[k]["score"] / (len(SCORES[k][1]) - 1) for k in SCORES if k in ans},
+            extras={"other_p": move["probabilities"].get("other", 0.0),
+                    "progress": ans.get("progress", {}).get("probabilities"),
+                    "subgoal_done": ans.get("subgoal_done", {}).get("noul"),
+                    "noteworthy": ans.get("noteworthy", {}).get("noul")},
         )
+
+
+def choose_value(jev: JevClient, observation: dict, workstream: dict | None, history: list[dict],
+                 field: str, values: list[str]) -> tuple[str, float]:
+    """Second stage of typing: select, don't generate. Jev picks the value from what has been seen."""
+    keys = {f"v{i}": v for i, v in enumerate(values[:250])}
+    state = {"task": observation.get("task"), "workstream": workstream, "field": field,
+             "form_state": observation.get("form_state"), "history_tail": history[-8:]}
+    ans = jev.ask(state, {"value": {
+        "type": "choice",
+        "instructions": {"question": "Which value should be typed into the form field named in `field`, given "
+                         "`workstream.current_subgoal`, `workstream.notes` and `task`?",
+                         "guidance": "The value must be of the kind the field expects (a quantity is a plain number, "
+                         "an id goes in an id field). Do not re-enter values already used in `history_tail` for a finished item."},
+        "criteria": {**keys, "other": "None of these values belongs in this field"},
+    }}, purpose="value")["value"]
+    best = max((k for k in keys), key=lambda k: ans["probabilities"].get(k, 0))
+    return keys[best], ans["confidence"]
 
 
 ESCALATE_SYSTEM = """You are the System 2 fallback for a fast game-playing policy that was unsure.
@@ -130,7 +176,8 @@ class Escalator:
                   or d.scores.get("threat", 0.0) >= self.max_threat)
         return unsure and len(top) > 1 and self.used < self.budget_per_episode
 
-    def decide(self, model: dict, observation: dict, history: list[dict], d: Decision) -> Decision:
+    def decide(self, model: dict, observation: dict, history: list[dict], d: Decision,
+               workstream: dict | None = None) -> Decision:
         self.used += 1
         ranked = sorted(d.probabilities.items(), key=lambda kv: -kv[1])
         out = self.llm.json(
@@ -139,9 +186,11 @@ class Escalator:
                 "goal": model.get("goal"),
                 "heuristics": model.get("heuristics"),
                 "observation": observation,
-                "recent_actions": [h["action"] for h in history[-6:]],
+                "workstream": workstream,
+                "recent_actions": [h["action"] for h in history[-8:]],
+                "options_omitted": max(0, len(d.probabilities) - 25),
                 "options_with_fast_policy_probability": [
-                    {"action": a, "p": round(p, 3)} for a, p in ranked
+                    {"action": a, "p": round(p, 3)} for a, p in ranked[:25]
                 ],
             },
             purpose="escalate", tier="cheap", max_tokens=300,

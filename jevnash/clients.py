@@ -25,6 +25,7 @@ JEV_MODEL = "jev-latest"
 TIERS = {
     "smart": ("claude-sonnet-5", "sonnet", 2.0, 10.0),
     "cheap": ("claude-haiku-4-5", "haiku", 1.0, 5.0),
+    "max": ("claude-opus-5", "opus", 5.0, 25.0),
 }
 
 
@@ -39,7 +40,11 @@ class JevClient:
         body = {"model": JEV_MODEL, "state": state, "questions": questions}
         t0 = time.time()
         for attempt in range(5):
-            resp = self.http.post(JEV_URL, json=body)
+            try:
+                resp = self.http.post(JEV_URL, json=body)
+            except httpx.TransportError:  # timeouts and dropped connections are retried like a 529
+                time.sleep(2**attempt)
+                continue
             if resp.status_code in (429, 529) or resp.status_code >= 500:
                 time.sleep(2**attempt)
                 continue
@@ -52,7 +57,7 @@ class JevClient:
             bus.emit("jev_call", purpose=purpose, questions=len(questions), tokens=tokens,
                      ms=round((time.time() - t0) * 1000))
             return data["answers"]
-        raise RuntimeError(f"Jev unavailable: {resp.status_code} {resp.text}")
+        raise RuntimeError("Jev unavailable after 5 attempts")
 
 
 def _parse_json(text: str) -> Any:

@@ -15,6 +15,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from .brain import Brain, Librarian
 from .budget import budget
 from .clients import JevClient, LLMClient
 from .enumerator import OptionEnumerator
@@ -23,14 +24,15 @@ from .events import bus
 from .games import ENVS
 from .learning import EpisodeLogger, Reflector, ValueModel
 from .modeler import GameModeler
-from .policy import SCORES, Decision, Escalator, JevPolicy
+from .policy import SCORES, Decision, Escalator, JevPolicy, choose_value
+from .workstream import Workstream
 
 MAX_TICKS = 60
 REMODEL_EVERY = 10  # episodes; the periodic re-run trigger
 REFLECT_ON_WIN_EVERY = 5  # wins teach less than losses, so they are reviewed less often
 # Mean outcome of a uniformly random agent (env_a/env_b measured over 200 episodes).
 BASELINE = {"env_a": 0.515, "env_b": 0.495, "web_form": 0.0, "web_race": 0.0, "web_open": 0.0,
-            "web_canvas": 0.5}
+            "web_canvas": 0.5, "suite": 0.0, "paint": 0.0}
 CACHE_MIN_CONFIDENCE = 0.6  # only confident Jev decisions are replayed from cache
 
 
@@ -55,7 +57,7 @@ def _key(*parts) -> str:
 
 class Harness:
     def __init__(self, env: GameEnv, run_dir: Path, learn: bool = True, pace: float = 0.0,
-                 documents: str | None = None):
+                 documents: str | None = None, planner: str = "smart"):
         self.env, self.run_dir, self.learn, self.pace = env, run_dir, learn, pace
         self.documents = documents
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -76,6 +78,14 @@ class Harness:
         self.cache: dict = self._load(self.cache_path) or {"jev": {}, "llm": {}}
         self.transitions: list[dict] = []
         self.wins_since_reflect = 0
+        # Workstreams (long tasks the agent must declare finished) are steered by the Librarian,
+        # which owns the markdown brain. One brain is shared by every workstream env.
+        self.workstream = bool(getattr(env, "can_finish", False))
+        self.librarian = Librarian(Brain(Path("brain")), tier=planner) if self.workstream and self.llm.api else None
+        if self.workstream:
+            self.escalator.max_threat, self.escalator.budget_per_episode = 2.0, 10
+            # No rulebook to infer: the task text is the goal and the brain holds the know-how.
+            self.model = {"goal": "Complete `observation.task` exactly as written, then finish.", "heuristics": []}
 
     @staticmethod
     def _load(path: Path):
@@ -99,9 +109,10 @@ class Harness:
         self.publish_model()
         self.save()
 
-    def decide(self, obs: dict, actions: list[str], history: list[dict]) -> tuple[Decision, str]:
+    def decide(self, obs: dict, actions: list[str], history: list[dict],
+               ws: dict | None = None) -> tuple[Decision, str]:
         learnings = (self.model.get("heuristics"), self.model.get("action_notes"))
-        situation = _key(_situation(obs), actions)
+        situation = _key(_situation(obs), actions, ws and (ws["current_subgoal"], ws["briefing"]))
         jev_key = _key(situation, learnings)
         if jev_key in self.cache["jev"]:
             budget.cache_hits += 1
@@ -109,7 +120,7 @@ class Harness:
 
         criteria, keys = self.enumerator.criteria(self.model, actions)
         bus.emit("thinking", who="jev")
-        d = self.policy.decide(self.model, obs, history, criteria, keys)
+        d = self.policy.decide(self.model, obs, history, criteria, keys, ws)
         source = "jev"
         if self.escalator.should_escalate(d):
             if situation in self.cache["llm"] and self.cache["llm"][situation] in d.probabilities:
@@ -119,7 +130,7 @@ class Harness:
             elif budget.allows_llm("escalate"):
                 bus.emit("thinking", who="llm")
                 try:
-                    d = self.escalator.decide(self.model, obs, history, d)
+                    d = self.escalator.decide(self.model, obs, history, d, ws)
                 except Exception as e:  # a failed System 2 call must never stop play
                     bus.emit("error", where="escalate", error=str(e)[:200])
                 if d.escalated:
@@ -139,23 +150,47 @@ class Harness:
         bus.emit("episode_start", n=n, view=self.env.render(), observation=self.env.observe())
         history: list[dict] = []
         noops: set[tuple[str, str]] = set()
+        taken: dict[tuple[str, str], int] = {}  # how often each action was taken from each exact situation
+        ws_ctl = Workstream(self, self.env) if self.librarian else None
+        if ws_ctl:
+            ws_ctl.start()
         seen_verbs = {s.get("verb") for s in self.model.get("action_schema", [])}
 
-        for tick in range(MAX_TICKS):
+        for tick in range(getattr(self.env, "max_steps", MAX_TICKS) + 1):
             if self.env.done():
                 break
             obs = self.env.observe()
             view = self.env.render()
+            ws = ws_ctl.context(obs, history) if ws_ctl else None
             actions = self.enumerator.enumerate(self.model, obs, self.env.legal_actions())
-            # No-op guard: actions that already changed nothing from this exact situation are
-            # taken off the menu, so neither Jev nor the cache can loop on them.
+            if ws_ctl:
+                actions = ws_ctl.shape(actions)
+            # No-op and cycle guard: an action that changed nothing, or was already taken twice from this
+            # exact situation, is not offered again, so neither Jev nor the cache can loop.
             here = _key(_situation(obs))
-            actions = [a for a in actions if (here, a) not in noops]
+            actions = [a for a in actions if (here, a) not in noops and taken.get((here, a), 0) < 2] or actions[-1:]
             if not actions:  # dead end: nothing left to do and the env has not declared an outcome
                 bus.emit("stuck", n=n, observation=obs)
                 break
-            d, source = self.decide(obs, actions, history)
-            value_pred = self.value.predict(d.scores)
+            if ws_ctl and ws_ctl.finished:
+                d, source = Decision("finish: the whole task is complete, stop here", 1.0, {}, {}), "foreman"
+            else:
+                d, source = self.decide(obs, actions, history, ws)
+                if ws_ctl and ws_ctl.after_decision(d, obs, history):
+                    if ws_ctl.finished:
+                        d, source = Decision("finish: the whole task is complete, stop here", 1.0, {}, {}), "foreman"
+                    else:
+                        actions = ws_ctl.shape(self.enumerator.enumerate(self.model, obs, self.env.legal_actions()))
+                        actions = [a for a in actions if (here, a) not in noops and taken.get((here, a), 0) < 2] or actions[-1:]
+                        d, source = self.decide(obs, actions, history, ws_ctl.context(obs, history))
+            if d.action.endswith("= ?"):  # two-stage typing: Jev now selects the value
+                tried = {a for h, a in taken if h == here}
+                values = [v for v in self.env.value_candidates() if f'{d.action[:-1]}"{v}"' not in tried]
+                value, vconf = choose_value(self.jev, obs, ws_ctl.context(obs, history) if ws_ctl else None,
+                                            history, d.action[:-4], values)
+                d.action, d.confidence = f'{d.action[:-1]}"{value}"', min(d.confidence, vconf)
+                d.probabilities = {d.action: 1.0}
+            value_pred = self.value.predict(d.scores) if d.scores else None
             label = (f"{source.upper()} → {d.action[:60]}  ·  conf {d.confidence:.2f}"
                      + ("  ·  escalated to System 2" if d.escalated else ""))
             ranked = sorted(d.probabilities.items(), key=lambda kv: -kv[1])
@@ -179,20 +214,26 @@ class Harness:
             if not info.get("error") and _key(_situation(after)) == here:
                 noops.add((here, d.action))
                 bus.emit("noop", action=d.action)
-            step = {"before": obs, "action": d.action, "after": after}
-            history.append(step)
-            self.transitions = (self.transitions + [step])[-24:]
+            taken[(here, d.action)] = taken.get((here, d.action), 0) + 1
+            history.append({"action": d.action, "result": info.get("error") or after.get("message")})
+            self.transitions = (self.transitions + [{"before": obs, "action": d.action, "after": after}])[-24:]
+            if ws_ctl:
+                ws_ctl.after_step(after, history, noops)
 
             # Surprise triggers: a rejected action, or an action verb the model doesn't know.
             verb = d.action.split()[0] if d.action else ""
             surprised = info.get("error") or (seen_verbs and verb not in seen_verbs)
-            if self.learn and surprised and budget.allows_llm():
+            if self.learn and surprised and not self.workstream and budget.allows_llm():
                 self.remodel("rejected_action" if info.get("error") else "new_action_type")
                 seen_verbs = {s.get("verb") for s in self.model.get("action_schema", [])} | {verb}
 
         outcome = self.env.outcome() if self.env.done() else 0.0
         record = self.logger.end(n, outcome, "harness")
         record["final_observation"] = self.env.observe()
+        record["pages_used"] = ws_ctl.pages if ws_ctl else []
+        record["plan"] = (ws_ctl.plan if ws_ctl else [])
+        record["rescues"] = ws_ctl.rescues if ws_ctl else 0
+        record["notes"] = ws_ctl.notes if ws_ctl else []
         bus.emit("episode_end", n=n, outcome=outcome, view=self.env.render(),
                  observation=record["final_observation"])
         if self.learn:
@@ -200,7 +241,32 @@ class Harness:
         budget.publish()
         return outcome
 
+    def learn_from_workstream(self, record: dict) -> None:
+        """Workstreams learn into the brain: evidence votes are free, consolidation is paced."""
+        brain, won = self.librarian.brain, record["outcome"] >= 1.0
+        report = self.env.report() if hasattr(self.env, "report") else {}
+        brain.vote(record["pages_used"], won)
+        run = {"task": record["ticks"][0]["observation"].get("task") if record["ticks"] else "",
+               "score": record["outcome"], "checks": report, "outline": record["plan"], "rescues": record["rescues"],
+               "notes": record["notes"],
+               "pages_used": record["pages_used"],
+               "steps": [{"url": t["observation"].get("url", "").split("/", 3)[-1], "action": t["action"],
+                          "by": t["source"], "error": t.get("error")} for t in record["ticks"]]}
+        (brain.root / "raw/runs" / f"{int(time.time())}.json").write_text(json.dumps(run, indent=1))
+        brain.log(f"run | score {record['outcome']:.2f} in {len(record['ticks'])} steps | {run['task'][:70]}")
+        self.wins_since_reflect = self.wins_since_reflect + 1 if won and not record["rescues"] else 0
+        # A clean win on known ground teaches little; anything else is worth writing down.
+        if (self.wins_since_reflect == 0 or not record["pages_used"]) and budget.allows_llm():
+            bus.emit("thinking", who="reflect")
+            try:
+                self.librarian.consolidate(run)
+            except Exception as e:
+                bus.emit("error", where="consolidate", error=str(e)[:200])
+        self.save()
+
     def learn_from(self, record: dict) -> None:
+        if self.librarian:
+            return self.learn_from_workstream(record)
         won = record["outcome"] >= 1.0
         self.wins_since_reflect = self.wins_since_reflect + 1 if won else 0
         due = not won or self.wins_since_reflect >= REFLECT_ON_WIN_EVERY
@@ -234,6 +300,11 @@ def main() -> None:
     ap.add_argument("--no-hold", action="store_true", help="exit when done instead of keeping the dashboard up")
     ap.add_argument("--pace", type=float, default=None, help="seconds to pause per tick for viewers")
     ap.add_argument("--headed", action="store_true", help="show the real browser window (web envs)")
+    ap.add_argument("--family", help="suite: run only this task family (refund, update_contact, reorder, escalate)")
+    ap.add_argument("--planner", choices=["cheap", "smart", "max"], default="smart",
+                    help="LLM tier for the Librarian (Haiku 4.5 / Sonnet 5 / Opus 5)")
+    ap.add_argument("--style", help="paint: pixel-art | anime | photo-realistic")
+    ap.add_argument("--scene", help="paint: sunset | house | portrait")
     ap.add_argument("--task", help="web_open: what to accomplish")
     ap.add_argument("--url", help="web_open: where to start")
     ap.add_argument("--inputs", default="", help="web_open: comma-separated strings the agent may type")
@@ -248,6 +319,9 @@ def main() -> None:
             ap.error("web_open needs --task and --url")
         kwargs |= {"task": args.task, "url": args.url,
                    "inputs": [s for s in args.inputs.split(",") if s]}
+    if args.family:
+        kwargs["family"] = args.family
+    kwargs |= {k: v for k, v in (("style", args.style), ("scene", args.scene)) if v}
     if args.agent == "random":
         outcomes = run_random(ENVS[args.env](**kwargs), args.episodes or 100)
         print(f"random agent: mean outcome {sum(outcomes) / len(outcomes):.3f} over {len(outcomes)}")
@@ -265,7 +339,7 @@ def main() -> None:
         from .perception import parse_file
         documents = parse_file(args.rulebook)
     h = Harness(env, Path(args.run_dir or f"runs/{args.env}"), learn=not args.no_learn, pace=pace,
-                documents=documents)
+                documents=documents, planner=args.planner)
     past = [ep["outcome"] for ep in h.logger.load()]
     bus.emit("run_start", env=args.env, minutes=args.minutes, usd=args.usd, past_outcomes=past,
              baseline=BASELINE.get(args.env))
@@ -281,6 +355,9 @@ def main() -> None:
             print(f"episode {i}: outcome={outcome}  mean={sum(outcomes) / len(outcomes):.3f}  "
                   f"jev={budget.jev_calls} llm={budget.llm_calls} cache={budget.cache_hits} "
                   f"spent=${budget.spent:.3f}")
+            if hasattr(env, "report"):
+                failed = [name for name, ok in env.report().items() if not ok]
+                print(f"    [{getattr(env, 'task_family', '')}] steps={env.steps}" + (f"  FAILED: {failed}" if failed else "  all checks pass"))
             i += 1
     except KeyboardInterrupt:
         pass
