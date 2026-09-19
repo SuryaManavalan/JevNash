@@ -1,0 +1,12 @@
+[project]
+name = "jevnash"
+version = "0.1.0"
+description = "Game-agnostic harness: Jev is the fast policy, an LLM writes the rulebook, the harness learns."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.7.0",
+    "httpx>=0.28.1",
+    "numpy>=2.5.3",
+    "playwright>=1.63.0",
+    "python-dotenv>=1.2.3",
+]
