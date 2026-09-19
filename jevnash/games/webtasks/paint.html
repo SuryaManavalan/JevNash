@@ -4,7 +4,7 @@ body{font:14px system-ui;margin:0;background:#c0c7d1;color:#111}
 #bar{background:#e9edf2;border-bottom:2px solid #8b96a5;padding:6px 10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 #bar button{width:34px;height:30px;font-size:16px;border:1px solid #6d7887;background:#fff;cursor:pointer;border-radius:4px}
 #bar button.on{outline:3px solid #1d5fd6;background:#dbe7ff}
-#pal button{width:22px;height:22px;padding:0;border-radius:2px}
+#pal button{width:18px;height:18px;padding:0;border-radius:2px}
 #stat{padding:5px 12px;background:#fff8d6;border-bottom:1px solid #c9b458;font-family:ui-monospace,monospace}
 #work{display:flex;gap:26px;padding:16px}
 .frame{position:relative;width:448px;height:448px;background:#fff;box-shadow:0 2px 10px #0005}
@@ -28,7 +28,9 @@ const P=new URLSearchParams(location.search), N=+P.get('grid')||16, SCENE=P.get(
 const COLORS={white:'#ffffff',black:'#111111','dark gray':'#555555',gray:'#9a9a9a','light gray':'#d4d4d4',red:'#d62828','dark red':'#7f1d1d',
  orange:'#f77f00',yellow:'#fcd116','pale yellow':'#fff3b0',green:'#2a9d3a','dark green':'#14532d','light green':'#9be28f',teal:'#1f8a8a',
  'sky blue':'#7ec8f2',blue:'#1d5fd6',navy:'#14213d',purple:'#7b2cbf',pink:'#ff8fab',magenta:'#c9184a',brown:'#7f4f24',tan:'#d4a373',
- peach:'#ffd6a5',cream:'#fefae0'};
+ peach:'#ffd6a5',cream:'#fefae0','burnt orange':'#b3541e','deep orange':'#e06c10',amber:'#f9a21b',gold:'#ffb703','dusk brown':'#6b3a2a',
+ 'dusk purple':'#3b2a4f','slate blue':'#2c3e63','steel blue':'#3f6a9a','pale blue':'#b9def5','mist':'#dcebe6','deep teal':'#176b70','dark teal':'#0f4a55',
+ 'mid green':'#1f7a32','forest':'#1a6b2c',indigo:'#2b1f6b',violet:'#5a2a9a','skin shadow':'#e0b083','dark brown':'#5a3616',rose:'#e5989b'};
 const TOOLS={pencil:['✏️','Pencil: paint one spot'],line:['╱','Line: click start cell, then end cell'],rect:['▬','Filled box: click one corner cell, then the opposite corner'],
  ellipse:['⬤','Filled oval: click one corner of its bounding box, then the opposite corner'],fill:['🪣','Bucket: flood-fill the area under the clicked cell']};
 const SIZES={S:['·','Thin stroke',1],M:['•','Medium stroke',2],L:['●','Thick stroke',4]};
@@ -53,7 +55,7 @@ function flood(px,py,hex){const d=x.getImageData(0,0,W,W),a=d.data,i0=(py*W+px)*
  if(t.every((v,i)=>Math.abs(v-n[i])<8))return;const st=[[px,py]];while(st.length){const [u,v]=st.pop();if(u<0||v<0||u>=W||v>=W)continue;const i=(v*W+u)*4;
   if(Math.abs(a[i]-t[0])>40||Math.abs(a[i+1]-t[1])>40||Math.abs(a[i+2]-t[2])>40)continue;a[i]=n[0];a[i+1]=n[1];a[i+2]=n[2];a[i+3]=255;st.push([u+1,v],[u-1,v],[u,v+1],[u,v-1])}x.putImageData(d,0,0)}
 function click(r,k){const col=COLORS[S.color],w=SIZES[S.size][2]*CELL/2;x.fillStyle=x.strokeStyle=col;
- if(S.tool=='pencil'){snap();const [mx,my]=mid(r,k);x.beginPath();x.arc(mx,my,Math.max(CELL/2,w),0,7);x.fill()}
+ if(S.tool=='pencil'){snap();const g=SIZES[S.size][2]-1>>1;x.fillRect((k-g)*CELL,(r-g)*CELL,(2*g+1)*CELL,(2*g+1)*CELL)}  // S/M: one cell, L: 3x3
  else if(S.tool=='fill'){snap();const [mx,my]=mid(r,k);flood(mx|0,my|0,col)}
  else if(!S.first)S.first=[r,k];
  else{snap();const [r0,k0]=S.first;S.first=null;const x0=Math.min(k0,k)*CELL,y0=Math.min(r0,r)*CELL,ww=(Math.abs(k-k0)+1)*CELL,hh=(Math.abs(r-r0)+1)*CELL;

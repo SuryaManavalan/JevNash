@@ -434,8 +434,8 @@ class PaintEnv(BrowserEnv):
     text_budget = 400
     STYLES = {
         "pixel-art": (16, 40, "Pixel art: flat colours only, everything snapped to whole cells, built from filled boxes and single pencil cells. No gradients."),
-        "anime": (16, 45, "Anime / cel style: large flat colour regions with clean shapes (ovals, boxes), then thin black or dark outlines drawn with the line tool around the main shapes."),
-        "photo-realistic": (32, 90, "Photo-realistic: approximate smooth gradients with several bands of neighbouring shades, soften edges, add highlights and shadows. Fidelity to the reference matters most."),
+        "anime": (32, 70, "Anime / cel style: large flat colour regions with clean shapes (ovals, boxes), then thin black or dark outlines drawn with the line tool around the main shapes."),
+        "photo-realistic": (32, 120, "Photo-realistic: approximate smooth gradients with several bands of neighbouring shades, soften edges, add highlights and shadows. Fidelity to the reference matters most."),
     }
     SCENES = ["sunset", "house", "portrait"]
 
@@ -471,6 +471,54 @@ class PaintEnv(BrowserEnv):
             rows.append((chr(65 + r) if r < 26 else "A" + chr(65 + r - 26)) + ": " + ", ".join(runs))
         return rows
 
+    def _regions(self) -> list[str]:
+        """Shape-level perception: connected regions of one palette colour, biggest first, each described as the
+        stroke that would paint it. Per-row colour runs alone make planners draw stripes."""
+        n = self.grid
+        rgb, pal = self.page.evaluate(f"() => [thumb('ref', {n}), palette]")
+        pal = {k: tuple(int(v[i:i + 2], 16) for i in (1, 3, 5)) for k, v in pal.items()}
+        name = [[min(pal, key=lambda k: sum((a - b) ** 2 for a, b in zip(pal[k], rgb[(r * n + c) * 3:(r * n + c) * 3 + 3])))
+                 for c in range(n)] for r in range(n)]
+        cell = lambda r, c: (chr(65 + r) if r < 26 else "A" + chr(65 + r - 26)) + str(c + 1)
+        seen, out = set(), []
+        for r0 in range(n):
+            for c0 in range(n):
+                if (r0, c0) in seen:
+                    continue
+                colour, stack, comp = name[r0][c0], [(r0, c0)], []
+                seen.add((r0, c0))
+                while stack:
+                    r, c = stack.pop()
+                    comp.append((r, c))
+                    for rr, cc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+                        if 0 <= rr < n and 0 <= cc < n and (rr, cc) not in seen and name[rr][cc] == colour:
+                            seen.add((rr, cc))
+                            stack.append((rr, cc))
+                rs, cs = [p[0] for p in comp], [p[1] for p in comp]
+                top, bot, left, right = min(rs), max(rs), min(cs), max(cs)
+                fill = len(comp) / ((bot - top + 1) * (right - left + 1))
+                corners = sum((r, c) in set(comp) for r in (top, bot) for c in (left, right))
+                box = f'from cell "{cell(top, left)}" to cell "{cell(bot, right)}"'
+                if len(comp) <= 2:
+                    shape = f'tiny: pencil at cell "{cell(*comp[0])}"'
+                elif fill >= 0.85:
+                    shape = f"solid box: rect {box}"
+                elif 0.55 <= fill < 0.9 and corners == 0 and bot - top >= 2 and right - left >= 2:
+                    shape = f"round blob: ellipse {box}"
+                else:  # slopes, arcs, L-shapes: one rect per row span, which reads as a clean staircase
+                    spans, run = [], None  # consecutive rows with the same extent merge into one box
+                    for r in range(top, bot + 2):
+                        cols = sorted(c for rr, c in comp if rr == r)
+                        ext = (cols[0], cols[-1]) if cols else None
+                        if run and ext == run[1]:
+                            continue
+                        if run:
+                            spans.append(f'rect from cell "{cell(run[0], run[1][0])}" to cell "{cell(r - 1, run[1][1])}"')
+                        run = (r, ext) if ext else None
+                    shape = "irregular (slope/arc), paint row by row: " + "; ".join(spans[:24])
+                out.append((len(comp), f'{colour}, {len(comp)} cells - {shape}'))
+        return [text for _, text in sorted(out, reverse=True)]
+
     def _rules(self, limit: int) -> str:
         n = self.grid
         colours = ", ".join(self.page.evaluate("() => Object.keys(palette)"))
@@ -480,11 +528,15 @@ class PaintEnv(BrowserEnv):
                 f"given by two corner cells, fill = bucket. Colours: {colours}.\n"
                 f"Plan limit: at most {limit} subgoals (this overrides the usual limit). Each subgoal is ONE stroke, written exactly as: "
                 f"Draw <tool> in colour \"<colour>\" from cell \"<cell>\" to cell \"<cell>\" (pencil/fill: at cell \"<cell>\"). "
-                f"Later strokes paint over earlier ones: large background areas first, details last.\n")
+                f"Later strokes paint over earlier ones: large background areas first, details last. The line tool is ONLY for thin "
+                f"outlines - never fill an area with lines. Round things are ellipses, not lines or boxes. Paint only what is in the "
+                f"reference: no invented highlights, borders or decorations.\n")
 
     def briefing_material(self) -> str:
         return ("DRAWING TASK MATERIAL\n" + self._rules(self.max_prims)
-                + "Reference picture as nearest palette colour per cell (row: colour columns):\n" + "\n".join(self._rows("ref")))
+                + "Shapes found in the reference, biggest first (paint them in this order; merge neighbouring regions of "
+                "similar colour if you are short of strokes):\n- " + "\n- ".join(self._regions()[:self.max_prims])
+                + "\n\nThe same picture cell by cell, for checking (row: colour columns):\n" + "\n".join(self._rows("ref")))
 
     def repair_material(self) -> str | None:
         """Closed loop: what the canvas still gets wrong, row by row, for a short corrective pass."""
