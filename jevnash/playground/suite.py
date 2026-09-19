@@ -25,9 +25,19 @@ SUBJECTS = ["Login loop on SSO", "Export is missing rows", "Webhook retries", "S
             "Cannot change avatar", "API rate limit", "Slow dashboard", "Wrong timezone"]
 
 
+LABELS = {"apply": ["Apply changes", "Commit", "Update ticket"], "draft": ["Save draft", "Save", "Keep for later"],
+          "menu": ["Actions ▾", "More ▾", "⋯"], "lookup": ["Look up", "Find", "Go"], "refund": ["Refund…", "Issue credit…", "Return payment…"]}
+
+
 class World:
-    def __init__(self, seed: int):
+    def __init__(self, seed: int, chaos: bool = False):
         r = self.r = random.Random(seed)
+        # Chaos: control labels and nav order differ per world, and sessions get interrupted.
+        self.chaos = chaos
+        self.label = {k: (r.choice(v) if chaos else v[0]) for k, v in LABELS.items()}
+        self.nav = [("/desk", "Helpdesk"), ("/crm", "Customers"), ("/billing", "Billing"), ("/inventory", "Inventory")]
+        if chaos:
+            r.shuffle(self.nav)
         self.customers, self.invoices, self.tickets, self.stock = {}, {}, {}, {}
         self.refunds, self.orders, self.log = {}, [], []
         self.seq = r.randint(4000, 8000)
@@ -82,9 +92,11 @@ table{border-collapse:collapse;width:100%;background:#fff}td,th{border:1px solid
 input[type=text],select,textarea{font:inherit;padding:6px 8px;width:320px;box-sizing:border-box}details{margin-top:10px}"""
 
 
-def page(title: str, body: str, toast: str = "") -> str:
-    nav = ('<nav><b>ACME SUITE</b><a href="/desk">Helpdesk</a><a href="/crm">Customers</a>'
-           '<a href="/billing">Billing</a><a href="/inventory">Inventory</a></nav>')
+NAV = [("/desk", "Helpdesk"), ("/crm", "Customers"), ("/billing", "Billing"), ("/inventory", "Inventory")]
+
+
+def page(title: str, body: str, toast: str = "", nav_items=None) -> str:
+    nav = "<nav><b>ACME SUITE</b>" + "".join(f'<a href="{h}">{n}</a>' for h, n in (nav_items or NAV)) + "</nav>"
     t = f'<div class="toast">{e(toast)}</div>' if toast else ""
     return f"<!doctype html><meta charset=utf-8><title>{e(title)} · Acme Suite</title><style>{CSS}</style>{nav}<main>{t}{body}</main>"
 
@@ -126,8 +138,8 @@ class Suite:
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
-    def reset(self, seed: int) -> World:
-        self.world, self.greeted = World(seed), False
+    def reset(self, seed: int, chaos: bool = False) -> World:
+        self.world, self.greeted = World(seed, chaos), False
         return self.world
 
     @staticmethod
@@ -144,8 +156,19 @@ class Suite:
             self.greeted = True
             return self.go("/")
         app, rest = parts[0], parts[1:]
+        if w.chaos and method == "GET" and app in ("desk", "crm", "billing", "inventory") and w.r.random() < 0.1:
+            back = path + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
+            return page("Session check", "<div class=overlay><div class=modal role=dialog><h2>Are you still there?</h2>"
+                        "<p>For your security we pause inactive sessions.</p>"
+                        f"<a class='btn primary' href='/logout'>Log out</a> <a class=quiet href='{e(back)}'>Stay signed in</a></div></div>")
+        if app == "logout":
+            self.greeted = False
+            return self.go("/")
         try:
-            return getattr(self, f"app_{app}")(method, rest, q, w)
+            out = getattr(self, f"app_{app}")(method, rest, q, w)
+            if w.chaos and isinstance(out, str):  # chaos worlds shuffle the nav bar
+                out = out.replace("".join(f'<a href="{h}">{n}</a>' for h, n in NAV), "".join(f'<a href="{h}">{n}</a>' for h, n in w.nav))
+            return out
         except (KeyError, AttributeError, IndexError):
             return page("Not found", "<h2>404</h2><p>Nothing here.</p>"), 404
 
@@ -207,7 +230,7 @@ class Suite:
                 f"<form method=post class=card><label for=status>Status</label>{sel('status', ['Open', 'Pending', 'Solved'], t['status'])}"
                 f"<label for=priority>Priority</label>{sel('priority', ['Low', 'Normal', 'High', 'Urgent'], t['priority'])}"
                 f"<label for=note>Add internal note</label><textarea name=note id=note rows=2>{e(d.get('note', ''))}</textarea><p>"
-                f"<button class=primary name=do value=draft>Save draft</button> <button name=do value=apply>Apply changes</button></p></form>")
+                f"<button class=primary name=do value=draft>{w.label['draft']}</button> <button name=do value=apply>{w.label['apply']}</button></p></form>")
 
     # ------------------------------------------------------------------ crm
     def app_crm(self, m, rest, q, w):
@@ -251,7 +274,7 @@ class Suite:
             table = (f"<table><tr><th>Invoice</th><th>Account</th><th>Month</th><th>Amount</th><th>Status</th><th></th></tr>{rows}</table>"
                      if hits else ("<p><i>Nothing found. Search needs an exact invoice number or billing account.</i></p>" if term else ""))
             return page("Billing", "<h1>Billing</h1><form><label for=q>Invoice number or billing account</label>"
-                                   f"<input type=text id=q name=q value='{e(q.get('q', ''))}'> <button>Look up</button></form><br>{table}")
+                                   f"<input type=text id=q name=q value='{e(q.get('q', ''))}'> <button>{w.label['lookup']}</button></form><br>{table}")
         inv = w.invoices[rest[1]]
         view = rest[2] if len(rest) > 2 else ""
         if m == "POST" and view == "refund":
@@ -270,7 +293,7 @@ class Suite:
     def invoice_body(self, inv, w, view=""):
         c = w.customers[inv["customer"]]
         refunds = "".join(f"<li>{r['id']}: ${e(r['amount'])} ({e(r['reason'])})</li>" for r in w.refunds.values() if r["invoice"] == inv["id"])
-        menu = (f"<div class=card><a class=btn href='/billing/i/{inv['id']}/pdf'>Download PDF</a> <a class=btn href='/billing/i/{inv['id']}/refund'>Refund…</a> "
+        menu = (f"<div class=card><a class=btn href='/billing/i/{inv['id']}/pdf'>Download PDF</a> <a class=btn href='/billing/i/{inv['id']}/refund'>{w.label['refund']}</a> "
                 f"<a class=btn href='/billing/i/{inv['id']}'>Hide actions</a></div>") if view == "actions" else ""
         modal = ""
         if view == "refund":
@@ -283,7 +306,7 @@ class Suite:
         return (f"<h1>Invoice {inv['id']}</h1><div class=card><p><b>Customer:</b> {e(c['name'])} · <b>Account:</b> {inv['account']}</p>"
                 f"<p><b>Amount:</b> ${inv['amount']} · <b>Month:</b> {inv['month']} · <b>Status:</b> {inv['status']}</p>"
                 f"<ul>{refunds}</ul></div><form method=post action='/billing/i/{inv['id']}/void' style='display:inline'>"
-                f"<button class=danger>VOID INVOICE</button></form> <a class=quiet href='/billing/i/{inv['id']}/actions'>Actions ▾</a>{menu}{modal}")
+                f"<button class=danger>VOID INVOICE</button></form> <a class=quiet href='/billing/i/{inv['id']}/actions'>{w.label['menu']}</a>{menu}{modal}")
 
     # ------------------------------------------------------------------ inventory
     def app_inventory(self, m, rest, q, w):

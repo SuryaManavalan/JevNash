@@ -218,7 +218,9 @@ class Workstream:
     def after_step(self, obs_after: dict, history: list[dict], noops: set) -> None:
         self.ticks += 1
         self.on_subgoal += 1
-        stuck = self.on_subgoal >= 9 if self.static else (self.ticks >= 24 and self.rescues == 0)
+        # Looping shows up as few distinct actions over many steps; long tasks that keep moving are not stuck.
+        looping = len(history) >= 12 and len({h["action"] for h in history[-12:]}) <= 5
+        stuck = self.on_subgoal >= 9 if self.static else looping
         if not (stuck or len(noops) > self.rescues * 3 + 2) or self.rescues >= 2 or self.env.done() \
                 or not budget.allows_llm("escalate"):
             return

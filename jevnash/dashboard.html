@@ -90,6 +90,9 @@ svg text.sub{fill:var(--dim);font-weight:400;font-size:9px}
       <div id="gauge"><div id="conf">–</div><div><div id="src"></div><div id="why" style="color:var(--dim);margin-top:4px"></div></div></div>
       <div id="opts"></div></div>
     <div class="panel"><h2>SELF-EVALUATION · asked every tick, feeds the value model</h2><div id="sparks"></div></div>
+    <div class="panel" id="mission" style="display:none"><h2><span>WORKSTREAM · foreman's current subgoal</span><span id="mpos"></span></h2>
+      <div id="msub" style="font-size:14px;font-weight:600;color:var(--llm)"></div>
+      <div id="mpages" style="color:var(--dim);margin-top:6px;font-size:11px"></div></div>
     <div class="panel grow"><h2><span>LEARNED HEURISTICS · written into Jev's criteria</span><span id="goal"></span></h2><ol id="heur"></ol></div>
   </div>
 </main>
@@ -194,7 +197,12 @@ const H={
   run_end(e){say(`Session finished: ${e.episodes} episodes for $${e.spent}. Dashboard stays up until you stop the process.`)},
   perception_start(e){say('Looking at the screen: LlamaParse is turning pixels into a readable board…','llm')},
   perception(e){say(e.cached?'Recognised this exact frame — perception replayed from cache.':`Screen read in ${e.secs}s.`,e.cached?'cache':'llm')},
-  plan(e){say((e.rescued?'Librarian re-planned from the brain: ':'Plan step '+(e.step+1)+'/'+e.plan.length+': ')+e.plan[Math.min(e.step,e.plan.length-1)],'llm')},
+  plan(e){$('#mission').style.display='';const cur=e.plan[Math.min(e.step,e.plan.length-1)]||'…';$('#msub').textContent=cur;
+    $('#mpos').textContent=e.plan.length>1?`step ${e.step+1}/${e.plan.length}`:'';
+    $('#mpages').textContent=(e.pages&&e.pages.length)?'brain pages in use: '+e.pages.join(', '):'brain had nothing for this task yet';
+    if(e.notes){$('#heur').innerHTML='';e.notes.slice(-12).forEach(n=>{const li=document.createElement('li');li.textContent=n;$('#heur').appendChild(li)});
+      document.querySelector('#heur').parentElement.querySelector('h2 span').textContent='WORKING MEMORY · notes the foreman keeps'}
+    say((e.rescued?'Librarian re-planned from the brain: ':'Plan step '+(e.step+1)+'/'+e.plan.length+': ')+e.plan[Math.min(e.step,e.plan.length-1)],'llm')},
   notes(e){say('Noted for later: '+e.notes.slice(-2).join(' · '),'llm')},
   brain_tool(e){say('Librarian → '+e.tool+' '+e.input,'llm')},
   bind(e){if(!e.control)return say(`Jev could not bind ${e.kind} “${e.phrase}” with confidence; stroke skipped.`,"bad");say(`Jev bound ${e.kind} “${e.phrase}” → “${e.control}” (cached from now on).`,"jev")},

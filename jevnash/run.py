@@ -210,6 +210,9 @@ class Harness:
                     # The foreman quotes what must be typed: when it did, only those values are candidates.
                     quoted = [v for v in re.findall(r'"([^"]{1,60})"', ws_ctl.subgoal) if v in values]
                     values = quoted or values
+                if not values:  # nothing left to type here: take this field off the menu and look again
+                    noops.add((here, d.action))
+                    continue
                 value, vconf = choose_value(self.jev, obs, ws_ctl.context(obs, history) if ws_ctl else None,
                                             history, d.action[:-4], values)
                 d.action, d.confidence = f'{d.action[:-1]}"{value}"', min(d.confidence, vconf)
@@ -326,6 +329,7 @@ def main() -> None:
     ap.add_argument("--no-hold", action="store_true", help="exit when done instead of keeping the dashboard up")
     ap.add_argument("--pace", type=float, default=None, help="seconds to pause per tick for viewers")
     ap.add_argument("--headed", action="store_true", help="show the real browser window (web envs)")
+    ap.add_argument("--chaos", action="store_true", help="suite: per-episode label changes, shuffled nav, session interstitials")
     ap.add_argument("--family", help="suite: run only this task family (refund, update_contact, reorder, escalate)")
     ap.add_argument("--planner", choices=["cheap", "smart", "max"], default="smart",
                     help="LLM tier for the Librarian (Haiku 4.5 / Sonnet 5 / Opus 5)")
@@ -347,6 +351,8 @@ def main() -> None:
                    "inputs": [s for s in args.inputs.split(",") if s]}
     if args.family:
         kwargs["family"] = args.family
+    if args.chaos:
+        kwargs["chaos"] = True
     kwargs |= {k: v for k, v in (("style", args.style), ("scene", args.scene)) if v}
     if args.agent == "random":
         outcomes = run_random(ENVS[args.env](**kwargs), args.episodes or 100)

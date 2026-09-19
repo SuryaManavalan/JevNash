@@ -395,10 +395,10 @@ class SuiteEnv(BrowserEnv):
     harvest = True
     can_finish = True
 
-    def __init__(self, family: str | None = None, **kw):
+    def __init__(self, family: str | None = None, chaos: bool = False, **kw):
         from ..playground.suite import Suite
 
-        self.suite, self.family, self.episode_no = Suite(), family, 0
+        self.suite, self.family, self.chaos, self.episode_no = Suite(), family, chaos, 0
         super().__init__(**kw)
 
     def new_task(self):
@@ -407,7 +407,7 @@ class SuiteEnv(BrowserEnv):
         names = [self.family] if self.family else list(FAMILIES)
         self.task_family = names[self.episode_no % len(names)]
         self.episode_no += 1
-        world = self.suite.reset(self.rng.randint(0, 10**9))
+        world = self.suite.reset(self.rng.randint(0, 10**9), self.chaos)
         text, self.checks = FAMILIES[self.task_family](world)
         return text, f"http://127.0.0.1:{self.suite.port}/", []
 
