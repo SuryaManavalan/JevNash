@@ -22,8 +22,35 @@ uv run python -m jevnash.run --env env_a --episodes 200 --agent random
 
 Environments, from confined to open: `env_a` (3x3 grid game), `env_b` (pile game), `web_form`
 (local multi-step form), `web_canvas` (pixel-only board the agent can only read by looking), `web_race` (reach a Wikipedia article by links), `web_open` (any task on
-any site; Jev judges completion). Ids are opaque: no model is ever told which game it is in.
+any site; Jev judges completion), `suite` (enterprise workstreams), `paint` (drawing challenge). Ids are opaque: no model is ever told which game it is in.
 State lives in `runs/<env>/` (game model, caches, episode log, event log) and carries across runs.
+
+## v2: long enterprise workstreams
+
+Long tasks across several web apps are run by three roles (`jevnash/workstream.py`):
+
+| Role | Model | When | Job |
+| --- | --- | --- | --- |
+| Librarian | Sonnet 5 (Haiku once the brain is mature) | once per task, plus rare rescues | searches the markdown brain with grep/read tools, returns a briefing and an outline; after the task, writes what was learned back |
+| Foreman | Haiku 4.5 | every few ticks | reads the live screen, keeps working-memory notes, names the next subgoal, and alone decides when the task is finished |
+| Jev | jev-latest | every tick | picks the UI action for the current subgoal |
+
+Supporting mechanics: typing is select-not-generate (Jev picks the field, then the value, from strings
+harvested off visited pages, the task and the notes); an action that changed nothing, or was taken twice
+from the same situation, leaves the menu; app confirmation messages are recorded as proof so the foreman
+does not burn steps re-verifying; subgoals an adapter can parse into intents are compiled to macros, with
+Jev binding each phrase to a control once and the binding cached.
+
+The brain is documented in `docs/brain.md`. Measured results are in `docs/benchmarks.md`.
+
+```sh
+# enterprise workstreams across the Acme Suite playground (helpdesk, CRM, billing, inventory)
+uv run python -m jevnash.run --env suite --minutes 60 --usd 3 --dashboard
+uv run python -m jevnash.run --env suite --family refund --episodes 3 --dashboard --headed
+
+# drawing challenge: replicate a picture in a style; --planner picks the LLM tier being tested
+uv run python -m jevnash.run --env paint --style anime --scene house --planner cheap --episodes 1 --dashboard
+```
 
 ## How an hour stays cheap
 

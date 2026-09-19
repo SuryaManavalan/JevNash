@@ -22,12 +22,16 @@ the notes, what has been done, and the CURRENT screen, then return ONE JSON obje
 {"notes": [new facts from this screen the task will need later: ids, names, emails, amounts, statuses, which
            rows qualify and which do not. Facts only - no to-dos, no advice. [] if nothing new],
  "values": [exact strings from the screen or task that may have to be typed into a field later],
- "subgoal": "the ONE next concrete outcome, reachable in 1-4 UI actions, with exact values in \\"quotes\\" and the
-             control to use if the screen shows it. Never a loop, never a mental step.",
+ "subgoal": "the ONE next concrete outcome, reachable in 1-4 UI actions. Put in \\"quotes\\" ONLY the exact text that
+             must be typed into a field (never button names or option labels). Never a loop, never a mental step.",
  "finished": true only when EVERY part of the task has been done AND the results list shows each was saved}
-Trust `results` (what the app replied) over intentions. If the last subgoal is not achieved yet, give it again,
+`changes_confirmed_by_app` lists every change the app has acknowledged (applied, saved, issued, placed...). That is
+proof: verification subgoals are forbidden. Never re-open, re-list or re-check a record whose change is confirmed.
+The moment every change the task requires is in that list (and records that must stay untouched were not edited),
+set finished=true. Trust what the app replied over intentions. If the last subgoal is not achieved yet, give it again,
 reworded for the current screen. If the agent is going in circles, choose a different route."""
 
+VERIFY = re.compile(r"^\W*(verify|confirm|check|review|ensure|validate|make sure)\b|\bverify\b|double.check|re-?open", re.I)
 TODO = re.compile(r"^\W*(need|still|must|should|todo|to do|remember|policy|next)\b", re.I)
 
 
@@ -43,13 +47,24 @@ class Workstream:
         self.on_subgoal = self.ticks = self.rescues = self.foreman_calls = 0
         self.finished = False
         self.read_urls: set[str] = set()
+        self.repairs = 0
 
     # ---- start ---------------------------------------------------------------------------------
     def start(self) -> None:
         obs = self.env.observe()
         bus.emit("thinking", who="librarian")
         material = self.env.briefing_material() if self.static else ""
-        b = self.h.librarian.brief(obs.get("task", ""), obs, material)
+        # A fixed plan is only as good as its planner, so static envs always use the tier that was asked for.
+        b = self.h.librarian.brief(obs.get("task", ""), obs, material, tier=self.h.librarian.tier if self.static else None)
+        if self.static and not b.get("plan"):  # a fixed-plan task cannot start without a plan: ask once more
+            b = self.h.librarian.brief(obs.get("task", ""), obs, material, tier=self.h.librarian.tier)
+        if hasattr(self.env, "intents") and b.get("plan"):
+            bad = [p for p in b["plan"] if not self.env.intents(str(p))]
+            if len(bad) > 0.3 * len(b["plan"]):  # the adapter cannot execute this plan: show the planner why, once
+                bus.emit("replan", reason=f"{len(bad)} of {len(b['plan'])} subgoals not executable")
+                b = self.h.librarian.brief(obs.get("task", ""), obs, material + "\n\nFORMAT ERROR in your previous plan: these "
+                                           f"subgoals could not be executed: {bad[:4]}. Every subgoal must name one tool, one colour "
+                                           "and explicit cells, exactly in the required sentence form.", tier=self.h.librarian.tier)
         self.plan, self.briefing, self.pages = b.get("plan", []), b.get("briefing", ""), b.get("pages_used", [])
         if self.static and self.plan:
             self.subgoal = self.plan[0]
@@ -68,6 +83,8 @@ class Workstream:
             self.finished = self.env.plan_progress() >= len(self.plan)
             self.step = min(self.env.plan_progress(), len(self.plan) - 1)
             self.subgoal = self.plan[self.step]
+        if hasattr(self.env, "focus") and self.subgoal:  # before the menu is enumerated for this tick
+            self.env.focus(self.subgoal)
         ws = {"current_subgoal": self.subgoal, "briefing": self.briefing, "notes": self.notes}
         if self.static and hasattr(self.env, "plan_progress"):
             ws |= {"plan_position": f"subgoal {self.step + 1} of {len(self.plan)}", "counted": True}
@@ -79,9 +96,6 @@ class Workstream:
 
     def shape(self, actions: list[str]) -> list[str]:
         """Finishing is never Jev's call in foreman mode, and only at the last subgoal of a static plan."""
-        if hasattr(self.env, "focus") and self.subgoal:
-            self.env.focus(self.subgoal)
-            actions = [a for a in self.env.legal_actions() if a in set(actions)] or actions
         if hasattr(self.env, "pool"):  # quoted values in the subgoal become typeable
             for v in re.findall(r'"([^"]{1,60})"', self.subgoal or ""):
                 if v in self.env.pool:
@@ -90,6 +104,62 @@ class Workstream:
         may_finish = self.static and self.step >= len(self.plan) - 1 and (
             not hasattr(self.env, "plan_progress") or self.env.plan_progress() >= len(self.plan))
         return [a for a in actions if may_finish or not a.startswith("finish")] or actions
+
+    def repair(self) -> bool:
+        """After a fixed plan has run, an adapter that can measure the residual gets up to two corrective passes."""
+        if self.repairs >= 2 or not hasattr(self.env, "repair_material") or not budget.allows_llm("escalate"):
+            return False
+        material = self.env.repair_material()
+        if not material:
+            return False
+        self.repairs += 1
+        obs = self.env.observe()
+        bus.emit("thinking", who="librarian")
+        b = self.h.librarian.brief(obs.get("task", ""), obs, material, tier=self.h.librarian.tier)
+        extra = [p for p in b.get("plan", []) if self.env.intents(str(p))]
+        if not extra:
+            return False
+        self.plan += extra
+        self.subgoal, self.finished = self.plan[self.step], False
+        self.publish(rescued=True)
+        return True
+
+    def macro(self, actions: list[str]) -> list[str] | None:
+        """Intent macros: when the adapter can parse the current subgoal into intents, each intent is bound
+        to a menu option - by exact label, from the binding cache, or by asking Jev once - and the whole
+        subgoal is replayed without per-click model calls."""
+        if not (self.static and hasattr(self.env, "intents")) or self.step >= len(self.plan):
+            return None
+        intents = self.env.intents(self.plan[self.step])
+        if not intents:
+            return []  # unparseable subgoal: skip it rather than improvise
+        binds, out = self.h.cache.setdefault("bind", {}), []
+        label = lambda a: a.split("] ", 1)[-1]
+        for kind, phrase in intents:
+            exact = [a for a in actions if label(a).lower() == f"{kind} {phrase}".lower()]
+            key = f"{kind}|{phrase}"
+            if exact:
+                out.append(exact[0])
+                continue
+            if key not in binds:
+                controls = [a for a in actions if not label(a).lower().startswith("cell ") and not a.startswith("finish")]
+                keys = {f"o{i}": a for i, a in enumerate(controls)}
+                ans = self.h.jev.ask({"wanted": {"kind": kind, "name": phrase}}, {"bind": {
+                    "type": "choice",
+                    "instructions": "Which control selects the `wanted.kind` called `wanted.name`?",
+                    "criteria": {**{k: label(a) for k, a in keys.items()}, "other": "No control does this"},
+                }}, purpose="bind")["bind"]
+                best = max(keys, key=lambda k: ans["probabilities"].get(k, 0))
+                if ans["confidence"] < 0.6:  # never cache a guess
+                    bus.emit("bind", kind=kind, phrase=phrase, control=None, confidence=ans["confidence"])
+                    return []
+                binds[key] = label(keys[best])
+                bus.emit("bind", kind=kind, phrase=phrase, control=binds[key], confidence=ans["confidence"])
+            hit = [a for a in actions if label(a) == binds[key]]
+            if not hit:
+                return []
+            out.append(hit[0])
+        return out
 
     def after_decision(self, d, obs: dict, history: list[dict]) -> bool:
         """Returns True when the subgoal changed and Jev should choose again."""
@@ -106,7 +176,7 @@ class Workstream:
                     return True
             return False
         new_page = (x.get("noteworthy") or 0) >= 0.6 and obs.get("url") not in self.read_urls
-        if (x.get("subgoal_done") or 0) >= 0.7 or self.on_subgoal >= 6 or new_page:
+        if (x.get("subgoal_done") or 0) >= 0.7 or self.on_subgoal >= 4 or new_page:
             before = self.subgoal
             self.foreman(obs, history)
             return self.finished or self.subgoal != before
@@ -117,12 +187,21 @@ class Workstream:
             return
         self.read_urls.add(obs.get("url"))
         self.foreman_calls += 1
+        confirmed = [f'{h["action"]} -> {h["result"].split("app replied:")[-1].strip()}'
+                     for h in history if "app replied" in str(h.get("result"))]
+        payload = {
+            "task": obs.get("task"), "outline": self.plan, "briefing": self.briefing, "notes": self.notes,
+            "changes_confirmed_by_app": confirmed, "results": history[-10:], "last_subgoal": self.subgoal,
+            "steps_left": obs.get("steps_left"),
+            "screen": {k: obs.get(k) for k in ("url", "page_title", "page_text_excerpt", "form_state")},
+        }
         try:
-            out = self.h.llm.json(FOREMAN, {
-                "task": obs.get("task"), "outline": self.plan, "briefing": self.briefing, "notes": self.notes,
-                "results": history[-12:], "last_subgoal": self.subgoal, "steps_left": obs.get("steps_left"),
-                "screen": {k: obs.get(k) for k in ("url", "page_title", "page_text_excerpt", "form_state")},
-            }, purpose="foreman", tier="cheap", max_tokens=700)
+            out = self.h.llm.json(FOREMAN, payload, purpose="foreman", tier="cheap", max_tokens=700)
+            if confirmed and not out.get("finished") and VERIFY.search(str(out.get("subgoal", ""))):
+                # A second opinion under the rule it just broke: name a remaining change, or finish.
+                payload["rejected_subgoal"] = {"subgoal": out.get("subgoal"), "why": "verification is forbidden: "
+                                               "name a CHANGE that is still missing, or set finished=true"}
+                out = self.h.llm.json(FOREMAN, payload, purpose="foreman", tier="cheap", max_tokens=700)
         except Exception as e:
             bus.emit("error", where="foreman", error=str(e)[:200])
             return

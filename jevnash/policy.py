@@ -59,7 +59,8 @@ class JevPolicy:
                 k: model.get(k)
                 for k in ("goal", "heuristics", "win_signals", "lose_signals", "progress_signals")
             },
-            "observation": observation,
+            # Jev gets a shorter page excerpt than the foreman: enough to act on, far fewer tokens per tick.
+            "observation": {k: (v[:1500] if k == "page_text_excerpt" else v) for k, v in observation.items()},
             "history_tail": history[-8:],
         }
         instructions = {
@@ -138,7 +139,8 @@ def choose_value(jev: JevClient, observation: dict, workstream: dict | None, his
                  field: str, values: list[str]) -> tuple[str, float]:
     """Second stage of typing: select, don't generate. Jev picks the value from what has been seen."""
     keys = {f"v{i}": v for i, v in enumerate(values[:250])}
-    state = {"task": observation.get("task"), "workstream": workstream, "field": field,
+    ws = {k: v for k, v in (workstream or {}).items() if k != "briefing"}
+    state = {"task": observation.get("task"), "workstream": ws, "field": field,
              "form_state": observation.get("form_state"), "history_tail": history[-8:]}
     ans = jev.ask(state, {"value": {
         "type": "choice",

@@ -98,7 +98,7 @@ class ValueModel:
             if t.get("scores")
         ]
         outcomes = {ep["outcome"] for ep in episodes}
-        if len(episodes) < min_episodes or len(outcomes) < 2:
+        if len(episodes) < min_episodes or len(outcomes) < 2 or not rows:  # workstreams log no scores
             return False
         x = np.array([[1.0, *r[0]] for r in rows])
         y = np.array([r[1] for r in rows])

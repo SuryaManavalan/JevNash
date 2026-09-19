@@ -25,7 +25,7 @@ SCAN_JS = """
     const s = getComputedStyle(n), b = n.getBoundingClientRect();
     if (s.position === 'fixed' && !n.closest('#jev-layer') && b.width * b.height > innerWidth * innerHeight * 0.3) blocker = n;
   }
-  const sel = 'a[href], button, input, select, textarea, [role=button], [role=link], [onclick]';
+  const sel = 'a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=tab], [onclick]';
   for (const el of document.querySelectorAll(sel)) {
     if (el.closest('#jev-layer')) continue;
     if (blocker && !blocker.contains(el)) continue;
@@ -255,7 +255,9 @@ class BrowserEnv(GameEnv):
                 loc.select_option(label=value, timeout=4000)
             self.page.wait_for_timeout(350)  # give a navigation time to start before waiting on it
             self.page.wait_for_load_state("domcontentloaded", timeout=8000)
-            self.message = f"Did: {action}"
+            said = self.page.evaluate("""() => { const t = document.querySelector(
+                '.toast, .alert, .notice, .flash, [role=status], [role=alert]'); return t ? t.innerText.trim().slice(0, 140) : '' }""")
+            self.message = f"Did: {action}" + (f" -> app replied: {said!r}" if said else "")
         except Exception as e:
             self.message = f"Rejected action: {action!r}"
             info["error"] = f"{self.message} ({type(e).__name__})"
@@ -452,43 +454,73 @@ class PaintEnv(BrowserEnv):
         url = (Path(__file__).parent / "webtasks" / "paint.html").as_uri() + f"?grid={self.grid}&scene={self.scene}"
         return f"Replicate the reference picture on your canvas in {self.style} style, then finish.", url, []
 
-    def briefing_material(self) -> str:
+    def _rows(self, canvas: str) -> list[str]:
+        """A picture as text: nearest palette colour per cell, run-length encoded per row."""
         n = self.grid
-        rgb, pal = self.page.evaluate(f"() => [thumb('ref', {n}), palette]")
+        rgb, pal = self.page.evaluate(f"() => [thumb('{canvas}', {n}), palette]")
         pal = {k: tuple(int(v[i:i + 2], 16) for i in (1, 3, 5)) for k, v in pal.items()}
         rows = []
         for r in range(n):
             names = [min(pal, key=lambda k: sum((a - b) ** 2 for a, b in zip(pal[k], rgb[(r * n + c) * 3:(r * n + c) * 3 + 3])))
                      for c in range(n)]
             runs, start = [], 0
-            for c in range(1, n + 1):  # run-length encode each row
+            for c in range(1, n + 1):
                 if c == n or names[c] != names[start]:
                     runs.append(f"{names[start]} {start + 1}-{c}" if c - start > 1 else f"{names[start]} {c}")
                     start = c
-            row = chr(65 + r) if r < 26 else "A" + chr(65 + r - 26)
-            rows.append(f"{row}: " + ", ".join(runs))
-        return (f"DRAWING TASK MATERIAL\nStyle: {self.STYLES[self.style][2]}\n"
+            rows.append((chr(65 + r) if r < 26 else "A" + chr(65 + r - 26)) + ": " + ", ".join(runs))
+        return rows
+
+    def _rules(self, limit: int) -> str:
+        n = self.grid
+        colours = ", ".join(self.page.evaluate("() => Object.keys(palette)"))
+        return (f"Style: {self.STYLES[self.style][2]}\n"
                 f"Canvas: {n}x{n} cells, rows A.. top to bottom, columns 1..{n} left to right; cell \"C4\" = row C, column 4.\n"
                 f"Tools: pencil (one cell), line (two cells), rect = filled box (two corner cells), ellipse = filled oval inside the box "
-                f"given by two corner cells, fill = bucket. Stroke sizes S/M/L. Colours: {', '.join(pal)}.\n"
-                f"Plan limit: at most {self.max_prims} subgoals (this overrides the usual limit). Each subgoal is ONE stroke, written exactly as: "
+                f"given by two corner cells, fill = bucket. Colours: {colours}.\n"
+                f"Plan limit: at most {limit} subgoals (this overrides the usual limit). Each subgoal is ONE stroke, written exactly as: "
                 f"Draw <tool> in colour \"<colour>\" from cell \"<cell>\" to cell \"<cell>\" (pencil/fill: at cell \"<cell>\"). "
-                f"Paint large background areas first, details last. replan_after must be null.\n"
-                f"Reference picture as nearest palette colour per cell (row: colour columns):\n" + "\n".join(rows))
+                f"Later strokes paint over earlier ones: large background areas first, details last. replan_after must be null.\n")
 
-    def plan_progress(self) -> int:
-        """One plan subgoal = one stroke, and the app counts strokes."""
-        m = re.search(r"Strokes drawn: (\d+)", self.page.inner_text("#stat"))
-        return int(m.group(1)) if m else 0
+    def briefing_material(self) -> str:
+        return ("DRAWING TASK MATERIAL\n" + self._rules(self.max_prims)
+                + "Reference picture as nearest palette colour per cell (row: colour columns):\n" + "\n".join(self._rows("ref")))
+
+    def repair_material(self) -> str | None:
+        """Closed loop: what the canvas still gets wrong, row by row, for a short corrective pass."""
+        want, have = self._rows("ref"), self._rows("c")
+        wrong = [f"{w}   <- currently {h.split(': ', 1)[1]}" for w, h in zip(want, have) if w != h]
+        if self.similarity() >= 0.9 or not wrong:
+            return None
+        return ("DRAWING REPAIR MATERIAL\nThe first pass is on the canvas. Plan ONLY corrective strokes for the rows below.\n"
+                + self._rules(max(8, self.max_prims // 3)) + "Rows that are still wrong (row: what it should be <- what it is):\n"
+                + "\n".join(wrong))
+
+    TOOL_WORDS = {"rect": "rect", "rectangle": "rect", "box": "rect", "ellipse": "ellipse", "oval": "ellipse",
+                  "circle": "ellipse", "line": "line", "pencil": "pencil", "dot": "pencil", "fill": "fill", "bucket": "fill"}
+
+    def intents(self, subgoal: str) -> list[tuple[str, str]] | None:
+        """A stroke is a fixed sequence of intents; the harness binds each one to a control. Planners phrase
+        strokes differently, so this looks for the three things that matter instead of one sentence shape."""
+        text = subgoal.lower()
+        tool = next((self.TOOL_WORDS[w] for w in re.findall(r"[a-z]+", text) if w in self.TOOL_WORDS), None)
+        colours = sorted(self.page.evaluate("() => Object.keys(palette)"), key=len, reverse=True)
+        colour = next((c for c in colours if re.search(rf"\b{re.escape(c)}\b", text)), None)
+        cells = re.findall(r"\b([A-Z]{1,2}\d{1,2})\b", subgoal)
+        if not (tool and colour and cells):
+            return None
+        two_point = tool in ("rect", "ellipse", "line")
+        return [("drawing tool", tool), ("colour", colour), ("cell", cells[0])] + (
+            [("cell", cells[1] if len(cells) > 1 else cells[0])] if two_point else [])
 
     def focus(self, subgoal: str) -> None:
-        self.cells = set(re.findall(r'"([A-Z]{1,2}\d{1,2})"', subgoal))
+        self.cells = set(re.findall(r"\b([A-Z]{1,2}\d{1,2})\b", subgoal))
 
     def legal_actions(self) -> list[str]:
         keep = []
         for a in super().legal_actions():
             m = re.search(r"\] cell ([A-Z]{1,2}\d{1,2})$", a)
-            if not m or m.group(1) in self.cells:  # only the cells the current stroke names stay on the menu
+            if not m or not self.cells or m.group(1) in self.cells:  # only the cells the current stroke names
                 keep.append(a)
         return keep
 

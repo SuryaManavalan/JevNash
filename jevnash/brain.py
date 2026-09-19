@@ -52,7 +52,9 @@ status: candidate
 Workflows are numbered steps with {variables} for anything task-specific, plus a "Verify" line.
 App-maps describe navigation, where data hides, and UI traps. Lessons are one strategy each with
 when it applies. NEVER write literal record values (ids, names, amounts) from one task: abstract them.
-Keep pages under 600 words. Put pages in apps/, workflows/ or lessons/. Do not touch index.md,
+Write only what the run evidence shows (actions taken and what the app replied). If you are inferring a cause,
+say "(unconfirmed)" - a wrong trap costs every future run. An app confirmation message is proof a change was saved:
+never write steps that re-open a record just to verify it. Keep pages under 450 words; cut before you add. Put pages in apps/, workflows/ or lessons/. Do not touch index.md,
 log.md, AGENT.md or raw/. `status: candidate` pages are unverified: say so when you rely on one."""
 
 
@@ -179,14 +181,15 @@ class Librarian:
     def __init__(self, brain: Brain, tier: str = "smart"):
         self.brain, self.tier, self.client = brain, tier, Anthropic()
 
-    def _run(self, purpose: str, prompt: str, writable: bool, max_turns: int = 10) -> str:
-        model, _, usd_in, usd_out = TIERS[self.tier]
-        bus.emit("llm_start", purpose=purpose, tier=self.tier)
+    def _run(self, purpose: str, prompt: str, writable: bool, max_turns: int = 10, tier: str | None = None) -> str:
+        tier = tier or self.tier
+        model, _, usd_in, usd_out = TIERS[tier]
+        bus.emit("llm_start", purpose=purpose, tier=tier)
         t0, cost, text, calls = time.time(), 0.0, "", []
         runner = self.client.beta.messages.tool_runner(
             model=model, max_tokens=12000, tools=self.brain.tools(writable),
             system=SYSTEM + "\n\n# AGENT.md\n" + (self.brain.root / "AGENT.md").read_text(),
-            **({} if self.tier == "cheap" else {"output_config": {"effort": "low"}}), messages=[{"role": "user", "content": prompt}],
+            **({} if tier == "cheap" else {"output_config": {"effort": "low"}}), messages=[{"role": "user", "content": prompt}],
         )
         for turn, message in enumerate(runner):
             cost += (message.usage.input_tokens * usd_in + message.usage.output_tokens * usd_out) / 1e6
@@ -199,12 +202,17 @@ class Librarian:
                 break
         budget.llm_calls += 1
         budget.llm_usd += cost
-        bus.emit("llm_end", purpose=purpose, tier=self.tier, backend="api", secs=round(time.time() - t0, 1),
+        bus.emit("llm_end", purpose=purpose, tier=tier, backend="api", secs=round(time.time() - t0, 1),
                  usd=round(cost, 4), tools=calls)
         budget.publish()
         return text
 
-    def brief(self, task: str, observation: dict, material: str = "") -> dict:
+    def brief_tier(self) -> str:
+        """A matured brain needs lookup, not judgement: once pages are verified the cheap tier briefs."""
+        verified = sum(Brain.meta(p).get("status") == "verified" for p in self.brain.pages())
+        return "cheap" if verified >= 3 else self.tier
+
+    def brief(self, task: str, observation: dict, material: str = "", tier: str | None = None) -> dict:
         out = self._run("brief", f"""A new task is starting. Search the brain for anything relevant (apps, workflows, lessons),
 then answer with ONE JSON object and nothing else:
 {{"plan": [<3-9 short imperative subgoals, in order, each checkable from the screen; include task-specific values>],
@@ -224,9 +232,10 @@ lives if the brain does not say; plan to look. The final subgoal is always to co
 
 TASK: {task}
 STARTING SCREEN: {json.dumps(observation)[:1500]}
-{material}""", writable=False)
+{material}""", writable=False, tier=tier or self.brief_tier())
         try:
-            return _parse_json(out)
+            out = _parse_json(out)
+            return out if isinstance(out, dict) else {"plan": out, "briefing": "", "pages_used": []}
         except Exception:
             return {"plan": [], "briefing": "", "pages_used": []}
 
@@ -246,7 +255,8 @@ NOTES TAKEN SO FAR: {json.dumps(notes or [])}
 LAST ACTIONS: {json.dumps(recent)}
 CURRENT SCREEN: {json.dumps(observation)[:2500]}""", writable=False)
         try:
-            return _parse_json(out)
+            out = _parse_json(out)
+            return out if isinstance(out, dict) else {"plan": out}
         except Exception:
             return {}
 

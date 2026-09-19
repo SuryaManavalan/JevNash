@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -145,7 +146,7 @@ class Harness:
         self.escalator.new_episode()
         if self.model is None:
             self.remodel("cold_start")
-        elif self.learn and n > 0 and n % REMODEL_EVERY == 0 and budget.allows_llm():
+        elif self.learn and not self.workstream and n > 0 and n % REMODEL_EVERY == 0 and budget.allows_llm():
             self.remodel("periodic")
         bus.emit("episode_start", n=n, view=self.env.render(), observation=self.env.observe())
         history: list[dict] = []
@@ -172,6 +173,25 @@ class Harness:
             if not actions:  # dead end: nothing left to do and the env has not declared an outcome
                 bus.emit("stuck", n=n, observation=obs)
                 break
+            steps = ws_ctl.macro(actions) if ws_ctl else None
+            if steps is not None:  # the subgoal compiles to a macro: replay it with no per-click model calls
+                for k, act in enumerate(steps):
+                    bus.emit("tick", n=n, tick=tick, view=view, observation=obs, action=act, source="macro", confidence=1.0,
+                             options=[[act, 1.0]], n_options=len(actions), scores={}, escalated=False, value_pred=None,
+                             why=None, jev_action=None, label=f"MACRO {k + 1}/{len(steps)} → {act[:60]}")
+                    self.env.show_decision({act: 1.0}, act, f"MACRO · {ws_ctl.subgoal[:70]}")
+                    if self.pace:
+                        time.sleep(self.pace / 3)
+                    self.env.step(act)
+                    self.env.legal_actions()  # refresh element ids for the next click
+                self.logger.tick(observation=obs, options=[], action=" ; ".join(steps), confidence=1.0, probabilities={},
+                                 scores={}, escalated=False, source="macro", value_pred=None, extras={}, error=None)
+                ws_ctl.step += 1
+                ws_ctl.finished = ws_ctl.step >= len(ws_ctl.plan) and not ws_ctl.repair()
+                if not ws_ctl.finished:
+                    ws_ctl.subgoal = ws_ctl.plan[ws_ctl.step]
+                    ws_ctl.publish()
+                    continue
             if ws_ctl and ws_ctl.finished:
                 d, source = Decision("finish: the whole task is complete, stop here", 1.0, {}, {}), "foreman"
             else:
@@ -186,6 +206,10 @@ class Harness:
             if d.action.endswith("= ?"):  # two-stage typing: Jev now selects the value
                 tried = {a for h, a in taken if h == here}
                 values = [v for v in self.env.value_candidates() if f'{d.action[:-1]}"{v}"' not in tried]
+                if ws_ctl and ws_ctl.subgoal:
+                    # The foreman quotes what must be typed: when it did, only those values are candidates.
+                    quoted = [v for v in re.findall(r'"([^"]{1,60})"', ws_ctl.subgoal) if v in values]
+                    values = quoted or values
                 value, vconf = choose_value(self.jev, obs, ws_ctl.context(obs, history) if ws_ctl else None,
                                             history, d.action[:-4], values)
                 d.action, d.confidence = f'{d.action[:-1]}"{value}"', min(d.confidence, vconf)
@@ -234,6 +258,8 @@ class Harness:
         record["plan"] = (ws_ctl.plan if ws_ctl else [])
         record["rescues"] = ws_ctl.rescues if ws_ctl else 0
         record["notes"] = ws_ctl.notes if ws_ctl else []
+        if bus.shot:  # keep the last frame of browser episodes for later inspection
+            (self.run_dir / f"episode_{n}.jpg").write_bytes(bus.shot)
         bus.emit("episode_end", n=n, outcome=outcome, view=self.env.render(),
                  observation=record["final_observation"])
         if self.learn:
