@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>Corner Kitchen — Order</title>
+<style>
+body{font:16px system-ui;margin:0;background:#f6f3ee;color:#222}
+main{max-width:560px;margin:60px auto;background:#fff;padding:32px 36px;border-radius:14px;box-shadow:0 6px 30px #0001}
+h1{margin-top:0}section{display:none}section.on{display:block}
+label{display:block;margin:12px 0}select,input[type=text]{font:inherit;padding:8px 10px;width:100%;box-sizing:border-box}
+button{font:inherit;padding:10px 18px;margin:18px 8px 0 0;border:0;border-radius:8px;background:#c2410c;color:#fff;cursor:pointer}
+button.alt{background:#777}#done{color:#15803d;font-weight:600}
+</style>
+<main>
+<h1>Corner Kitchen</h1>
+<section id="s1" class="on"><h2>1. Size</h2>
+<label for="size">Size</label><select id="size" name="size"><option>Small</option><option>Medium</option><option>Large</option></select>
+<button onclick="go(2)">Next: toppings</button></section>
+<section id="s2"><h2>2. Toppings</h2>
+<label><input type="checkbox" value="Mushrooms"> Mushrooms</label><label><input type="checkbox" value="Olives"> Olives</label>
+<label><input type="checkbox" value="Peppers"> Peppers</label><label><input type="checkbox" value="Onions"> Onions</label>
+<button class="alt" onclick="go(1)">Back</button><button onclick="go(3)">Next: your details</button></section>
+<section id="s3"><h2>3. Your details</h2>
+<label for="name">Name for the order</label><input type="text" id="name" name="name" placeholder="Name for the order">
+<button class="alt" onclick="go(2)">Back</button><button class="alt" onclick="location.reload()">Cancel order</button>
+<button onclick="place()">Place order</button></section>
+<section id="s4"><p id="done"></p></section>
+</main>
+<script>
+function go(n){document.querySelectorAll('section').forEach(s=>s.classList.remove('on'));document.getElementById('s'+n).classList.add('on')}
+function place(){const o={size:size.value,toppings:[...document.querySelectorAll('input:checked')].map(c=>c.value),name:document.getElementById('name').value.trim()};
+ if(!o.name){alert;return} window.__order=o;done.textContent=`Order placed: ${o.size}, ${o.toppings.join(' + ')||'plain'}, for ${o.name}.`;go(4)}
+</script>
