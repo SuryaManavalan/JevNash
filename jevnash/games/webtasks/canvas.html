@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Arcade</title>
+<style>body{font:18px system-ui;background:#fff;color:#111;text-align:center;margin:30px}
+canvas{border:2px solid #111;display:block;margin:14px auto}button{font:16px system-ui;width:54px;height:40px;margin:3px}</style>
+<h2 id="h">Your move — you are X</h2>
+<canvas id="c" width="300" height="300"></canvas>
+<div id="pad"></div>
+<script>
+// The board exists only as pixels: nothing about it is readable from the DOM.
+const g=Array(9).fill(''),L=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]],x=c.getContext('2d');
+const names=['A1','A2','A3','B1','B2','B3','C1','C2','C3'];
+function draw(){x.clearRect(0,0,300,300);x.lineWidth=3;x.beginPath();for(const p of[100,200]){x.moveTo(p,0);x.lineTo(p,300);x.moveTo(0,p);x.lineTo(300,p)}x.stroke();
+ x.font='70px sans-serif';g.forEach((v,i)=>x.fillText(v,(i%3)*100+25,Math.floor(i/3)*100+75));
+ pad.innerHTML='';names.forEach((n,i)=>{if(i%3==0&&i)pad.appendChild(document.createElement('br'));const b=document.createElement('button');b.textContent=n;b.disabled=!!g[i]||!!window.__result;b.onclick=()=>play(i);pad.appendChild(b)})}
+function won(m){return L.some(l=>l.every(i=>g[i]==m))}
+function end(r,t){window.__result=r;h.textContent=t}
+function play(i){g[i]='X';if(won('X'))end('win','You won.');else if(!g.includes(''))end('draw','Draw.');
+ else{const e=g.map((v,k)=>v?-1:k).filter(k=>k>=0);g[e[Math.floor(Math.random()*e.length)]]='O';
+  if(won('O'))end('loss','You lost.');else if(!g.includes(''))end('draw','Draw.')}draw()}
+if(Math.random()<.5)g[Math.floor(Math.random()*9)]='O';draw();
+</script>

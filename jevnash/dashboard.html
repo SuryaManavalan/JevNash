@@ -192,6 +192,8 @@ const H={
     else{flow([['jev','act'],['act','env']],C.jev);say(`Jev chose “${e.action}” with confidence ${e.confidence.toFixed(2)} out of ${e.n_options} options.`,'jev')}},
   error(e){say(`LLM call failed during ${e.where}; continuing without it.`,'bad')},
   run_end(e){say(`Session finished: ${e.episodes} episodes for $${e.spent}. Dashboard stays up until you stop the process.`)},
+  perception_start(e){say('Looking at the screen: LlamaParse is turning pixels into a readable board…','llm')},
+  perception(e){say(e.cached?'Recognised this exact frame — perception replayed from cache.':`Screen read in ${e.secs}s.`,e.cached?'cache':'llm')},
   judge(e){say(`Jev judges the task ${(e.p_done*100).toFixed(0)}% likely complete.`,e.p_done>=.85?'jev':'')},
   noop(e){say(`“${e.action}” changed nothing — removed from the menu for this situation.`,'bad')},
   stuck(e){say('Dead end: no actions are available. Episode counted as a loss.','bad')},

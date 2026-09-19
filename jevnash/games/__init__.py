@@ -15,6 +15,7 @@ ENVS = {
     "env_a": Grid3Env,
     "env_b": PilesEnv,
     "web_form": _browser("OrderFormEnv"),
+    "web_canvas": _browser("CanvasGameEnv"),  # pixel-only board, read via LlamaParse
     "web_race": _browser("WikiRaceEnv"),
     "web_open": _browser("OpenWebEnv"),  # any site: --task "..." --url ... [--inputs a,b]
 }

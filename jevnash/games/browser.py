@@ -11,6 +11,7 @@ from typing import Any
 
 from playwright.sync_api import Page, sync_playwright
 
+from .. import perception
 from ..env import GameEnv
 from ..events import bus
 
@@ -103,6 +104,7 @@ class BrowserEnv(GameEnv):
     """One browser task. Subclasses define the task text, start URL and success check."""
 
     max_steps = 12
+    vision = False  # True: add a LlamaParse reading of the rendered page to every observation
 
     def __init__(self, seed: int | None = None, headed: bool = False):
         self.rng = random.Random(seed)
@@ -139,7 +141,15 @@ class BrowserEnv(GameEnv):
 
     def observe(self) -> dict[str, Any]:
         text = self.page.evaluate("() => (document.querySelector('main, #content, body').innerText || '')")
+        seen = {}
+        if self.vision and perception.available():
+            # Hide the agent's own overlays so they are not read back as part of the world.
+            self.page.evaluate("() => { const l = document.getElementById('jev-layer'); if (l) l.style.display = 'none' }")
+            frame = self.page.screenshot(type="png")
+            self.page.evaluate("() => { const l = document.getElementById('jev-layer'); if (l) l.style.display = '' }")
+            seen = {"screen_as_seen": perception.parse_bytes(frame, ".png", "screen")[:1500]}
         return {
+            **seen,
             "task": self.task,
             "url": self.page.url,
             "page_title": self.page.title(),
@@ -313,3 +323,24 @@ class OpenWebEnv(BrowserEnv):
             self.p_done, self._judged = ans["done"]["noul"], True
             bus.emit("judge", p_done=self.p_done)
         return self.p_done >= 0.85
+
+
+class CanvasGameEnv(BrowserEnv):
+    """Pixel-only game: the board is drawn on a canvas, so the only way to see it is to look.
+    Rows are A-C top to bottom, columns 1-3 left to right; the agent is never told that."""
+
+    max_steps = 6
+    vision = True
+
+    def new_task(self):
+        return ("Win the game shown on screen.",
+                (Path(__file__).parent / "webtasks" / "canvas.html").as_uri(), [])
+
+    def succeeded(self) -> bool:
+        return self.page.evaluate("() => window.__result || null") == "win"
+
+    def done(self) -> bool:
+        return self.finished or bool(self.page.evaluate("() => window.__result || null"))
+
+    def outcome(self) -> float:
+        return {"win": 1.0, "draw": 0.5}.get(self.page.evaluate("() => window.__result || null"), 0.0)

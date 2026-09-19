@@ -110,6 +110,7 @@ class GameModeler:
         transitions: list[dict],
         previous: dict | None = None,
         trigger: str = "cold_start",
+        documents: str | None = None,
     ) -> dict:
         def slim(obs: dict) -> dict:
             return {k: (v[:300] if isinstance(v, str) else v) for k, v in obs.items()}
@@ -126,6 +127,8 @@ class GameModeler:
             "recent_transitions": transitions,
             "previous_game_model": previous,
         }
+        if documents:  # rulebook / brief supplied with the task, parsed by perception
+            payload["provided_documents"] = documents[:8000]
         model = self.llm.json(SYSTEM, payload, purpose="model")
         contradictions = self.validate(model, transitions[-4:])
         if contradictions:

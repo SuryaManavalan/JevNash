@@ -29,7 +29,8 @@ MAX_TICKS = 60
 REMODEL_EVERY = 10  # episodes; the periodic re-run trigger
 REFLECT_ON_WIN_EVERY = 5  # wins teach less than losses, so they are reviewed less often
 # Mean outcome of a uniformly random agent (env_a/env_b measured over 200 episodes).
-BASELINE = {"env_a": 0.515, "env_b": 0.495, "web_form": 0.0, "web_race": 0.0, "web_open": 0.0}
+BASELINE = {"env_a": 0.515, "env_b": 0.495, "web_form": 0.0, "web_race": 0.0, "web_open": 0.0,
+            "web_canvas": 0.5}
 CACHE_MIN_CONFIDENCE = 0.6  # only confident Jev decisions are replayed from cache
 
 
@@ -53,8 +54,10 @@ def _key(*parts) -> str:
 
 
 class Harness:
-    def __init__(self, env: GameEnv, run_dir: Path, learn: bool = True, pace: float = 0.0):
+    def __init__(self, env: GameEnv, run_dir: Path, learn: bool = True, pace: float = 0.0,
+                 documents: str | None = None):
         self.env, self.run_dir, self.learn, self.pace = env, run_dir, learn, pace
+        self.documents = documents
         run_dir.mkdir(parents=True, exist_ok=True)
         bus.open(run_dir)
         self.jev, self.llm = JevClient(), LLMClient()
@@ -89,7 +92,8 @@ class Harness:
         print(f"  [slow loop] rebuilding game model ({trigger})")
         bus.emit("slow_loop", phase="start", trigger=trigger)
         self.model = self.modeler.build(
-            self.env.observe(), self.env.legal_actions(), self.transitions, self.model, trigger
+            self.env.observe(), self.env.legal_actions(), self.transitions, self.model, trigger,
+            self.documents,
         )
         bus.emit("slow_loop", phase="end", trigger=trigger)
         self.publish_model()
@@ -233,6 +237,7 @@ def main() -> None:
     ap.add_argument("--task", help="web_open: what to accomplish")
     ap.add_argument("--url", help="web_open: where to start")
     ap.add_argument("--inputs", default="", help="web_open: comma-separated strings the agent may type")
+    ap.add_argument("--rulebook", help="PDF/image/doc with rules or a brief; parsed via LlamaParse")
     ap.add_argument("--run-dir", default=None)
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
@@ -255,7 +260,12 @@ def main() -> None:
         print(f"  brain dashboard: http://localhost:{args.port}")
     pace = args.pace if args.pace is not None else (0.7 if args.dashboard else 0.0)
     env = ENVS[args.env](**kwargs)
-    h = Harness(env, Path(args.run_dir or f"runs/{args.env}"), learn=not args.no_learn, pace=pace)
+    documents = None
+    if args.rulebook:
+        from .perception import parse_file
+        documents = parse_file(args.rulebook)
+    h = Harness(env, Path(args.run_dir or f"runs/{args.env}"), learn=not args.no_learn, pace=pace,
+                documents=documents)
     past = [ep["outcome"] for ep in h.logger.load()]
     bus.emit("run_start", env=args.env, minutes=args.minutes, usd=args.usd, past_outcomes=past,
              baseline=BASELINE.get(args.env))

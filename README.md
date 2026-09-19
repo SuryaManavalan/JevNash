@@ -21,7 +21,7 @@ uv run python -m jevnash.run --env env_a --episodes 200 --agent random
 ```
 
 Environments, from confined to open: `env_a` (3x3 grid game), `env_b` (pile game), `web_form`
-(local multi-step form), `web_race` (reach a Wikipedia article by links), `web_open` (any task on
+(local multi-step form), `web_canvas` (pixel-only board the agent can only read by looking), `web_race` (reach a Wikipedia article by links), `web_open` (any task on
 any site; Jev judges completion). Ids are opaque: no model is ever told which game it is in.
 State lives in `runs/<env>/` (game model, caches, episode log, event log) and carries across runs.
 
@@ -36,6 +36,19 @@ State lives in `runs/<env>/` (game model, caches, episode log, event log) and ca
 - Wins are reviewed every fifth time, losses every time. A no-op guard removes actions that
   changed nothing, so neither Jev nor the cache can loop.
 - `JEV_USD_PER_MTOK` (default 0.5) is an assumed Jev price for the spend meter; set your real one.
+
+## Perception (LlamaParse)
+
+With `LLAMA_CLOUD_API_KEY` set, `jevnash/perception.py` turns anything visual or document-shaped
+into text the models can read. A parse takes 10-20s, so it stays off the per-tick hot path and
+every result is cached by content hash:
+
+- `vision = True` on a `BrowserEnv` adds a `screen_as_seen` reading of the rendered page to each
+  observation. `web_canvas` relies on it entirely: its board exists only as canvas pixels.
+- `--rulebook manual.pdf` (PDF, image, docx, ...) is parsed once and given to the game modeller.
+
+Parses are usually right but not deterministic: the same board can come back as a slightly
+different table, so treat `screen_as_seen` as inferred state, not ground truth.
 
 ## LLM backend
 

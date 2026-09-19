@@ -52,6 +52,15 @@ wheels = [
 ]
 
 [[package]]
+name = "distro"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
 name = "docstring-parser"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -219,6 +228,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "httpx" },
+    { name = "llama-cloud" },
     { name = "numpy" },
     { name = "playwright" },
     { name = "python-dotenv" },
@@ -228,6 +238,7 @@ dependencies = [
 requires-dist = [
     { name = "anthropic", specifier = ">=1.7.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "llama-cloud", specifier = ">=2.8" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "playwright", specifier = ">=1.63.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
@@ -326,6 +337,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/28/30/879570ecf82574eaea77c5eb10309f4b630dece5f2a556e9814a90ba3f2d/jiter-0.17.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:40d2c240f8f80b5b0f201b29f0ae129c81448c60c772227a41747b5e0026f6a2", size = 279113, upload-time = "2026-09-12T15:14:10.117Z" },
     { url = "https://files.pythonhosted.org/packages/77/7a/1f0b8a35fbd079a4f1752c31a15dc99cf277f863747c459be0af39e900e5/jiter-0.17.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3e05f5adbf68c4bd11e1610f394034d984152988e84be6f8314235ce6f2139e5", size = 303708, upload-time = "2026-09-12T15:14:11.445Z" },
     { url = "https://files.pythonhosted.org/packages/e1/8b/d76219ebdbcf3d4209d9d21a0810db4c8d0a6f88e3ee87d30bdea4e90d30/jiter-0.17.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d2c0bf24c72fd0491405dce5d40194f2070e9021ce648c1a1d46234b93d848ff", size = 307147, upload-time = "2026-09-12T15:14:12.897Z" },
+]
+
+[[package]]
+name = "llama-cloud"
+version = "2.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/23/6723b40183322124ae1825185b1831bdbf12d41deb75007022934220511c/llama_cloud-2.16.0.tar.gz", hash = "sha256:248ddc6a6b3945e587f8f79695550f8f4c91ec6cddf8e0513c6d712a3a3ac79a", size = 3579829, upload-time = "2026-09-08T23:12:17.613Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/da/3fdf1fb5c1017d4bd4aeb0d8e213c3fe72181f52b233cdc174a41a79fc28/llama_cloud-2.16.0-py3-none-any.whl", hash = "sha256:9ab6bc8e53811e462a1b6251c1c794265bea25050d65a2c351eb1a47689c878e", size = 483664, upload-time = "2026-09-08T23:12:15.336Z" },
 ]
 
 [[package]]
