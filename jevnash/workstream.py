@@ -29,7 +29,8 @@ the notes, what has been done, and the CURRENT screen, then return ONE JSON obje
 proof: verification subgoals are forbidden. Never re-open, re-list or re-check a record whose change is confirmed.
 The moment every change the task requires is in that list (and records that must stay untouched were not edited),
 set finished=true. Trust what the app replied over intentions. If the last subgoal is not achieved yet, give it again,
-reworded for the current screen. If the agent is going in circles, choose a different route."""
+reworded for the current screen. If the data you need is not in the screen text, look at `controls_on_screen`: expanders ("More", "Details"), tabs
+and menus hide things. If the agent is going in circles, choose a different route."""
 
 VERIFY = re.compile(r"^\W*(verify|confirm|check|review|ensure|validate|make sure)\b|\bverify\b|double.check|re-?open", re.I)
 TODO = re.compile(r"^\W*(need|still|must|should|todo|to do|remember|policy|next)\b", re.I)
@@ -48,6 +49,7 @@ class Workstream:
         self.finished = False
         self.read_urls: set[str] = set()
         self.repairs = 0
+        self.version = 0
 
     # ---- start ---------------------------------------------------------------------------------
     def start(self) -> None:
@@ -96,8 +98,12 @@ class Workstream:
 
     def shape(self, actions: list[str]) -> list[str]:
         """Finishing is never Jev's call in foreman mode, and only at the last subgoal of a static plan."""
-        if hasattr(self.env, "pool"):  # quoted values in the subgoal become typeable
+        if hasattr(self.env, "pool"):  # quoted values in the subgoal become typeable - unless they name a control
+            labels = {a.split("] ", 1)[-1].split(" (in row")[0].strip().lower() for a in actions}
+            self.env.pool = [v for v in self.env.pool if v.lower() not in labels]
             for v in re.findall(r'"([^"]{1,60})"', self.subgoal or ""):
+                if v.lower() in labels:
+                    continue
                 if v in self.env.pool:
                     self.env.pool.remove(v)
                 self.env.pool.append(v)
@@ -194,6 +200,8 @@ class Workstream:
             "changes_confirmed_by_app": confirmed, "results": history[-10:], "last_subgoal": self.subgoal,
             "steps_left": obs.get("steps_left"),
             "screen": {k: obs.get(k) for k in ("url", "page_title", "page_text_excerpt", "form_state")},
+            # What can actually be clicked: collapsed sections, tabs and menus hide data the text does not show.
+            "controls_on_screen": [a.split("] ", 1)[-1][:60] for a in (self.env.legal_actions() or [])[:45]],
         }
         try:
             out = self.h.llm.json(FOREMAN, payload, purpose="foreman", tier="cheap", max_tokens=700)
@@ -212,6 +220,8 @@ class Workstream:
                 self.env.pool.append(str(v))
         self.finished = bool(out.get("finished"))
         if out.get("subgoal"):
+            if str(out["subgoal"]) != self.subgoal:
+                self.version += 1  # a new subgoal makes earlier actions fair game again
             self.subgoal, self.on_subgoal = str(out["subgoal"]), 0
         self.publish()
 

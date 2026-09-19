@@ -153,6 +153,7 @@ class Harness:
         noops: set[tuple[str, str]] = set()
         taken: dict[tuple[str, str], int] = {}  # how often each action was taken from each exact situation
         ws_ctl = Workstream(self, self.env) if self.librarian else None
+        seen_version = 0
         if ws_ctl:
             ws_ctl.start()
         seen_verbs = {s.get("verb") for s in self.model.get("action_schema", [])}
@@ -163,6 +164,9 @@ class Harness:
             obs = self.env.observe()
             view = self.env.render()
             ws = ws_ctl.context(obs, history) if ws_ctl else None
+            if ws_ctl and ws_ctl.version != seen_version:
+                seen_version = ws_ctl.version
+                taken.clear()
             actions = self.enumerator.enumerate(self.model, obs, self.env.legal_actions())
             if ws_ctl:
                 actions = ws_ctl.shape(actions)

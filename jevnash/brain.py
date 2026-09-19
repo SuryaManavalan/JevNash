@@ -217,14 +217,11 @@ class Librarian:
 then answer with ONE JSON object and nothing else:
 {{"plan": [<3-9 short imperative subgoals, in order, each checkable from the screen; include task-specific values>],
  "briefing": "<max 900 chars: the navigation facts, UI traps and workflow steps from the brain that matter for THIS task; say 'unverified' for candidate pages; empty string if the brain has nothing>",
- "pages_used": [<paths of pages you relied on>],
- "replan_after": <0-based index of the subgoal after which you must see the agent's notes to make the rest of the
-   plan concrete - e.g. after reading a ticket or a table when later steps are "for each ..." - or null>}}
+ "pages_used": [<paths of pages you relied on>]}}
 
 Planning rules: every subgoal is ONE concrete outcome on ONE record that can be confirmed on screen ("Ticket <id>
 is open", "Purchase order for <sku> placed"). No mental steps ("build a checklist"), no compound or "repeat for each"
-subgoals - if the items are not known yet, plan the reading steps, set replan_after, and the loop will be unrolled
-for you later. Quote every value that must be typed exactly, "like this". At most 12 subgoals unless the task
+subgoals - if the items are not known yet, plan the reading steps; a foreman unrolls loops from the live screen. Quote every value that must be typed exactly, "like this". At most 12 subgoals unless the task
 material sets another limit.
 You have not seen any record yet. If the task refers to a record (ticket, customer, order...)
 whose contents matter, the first subgoals must open and read it before acting elsewhere. Never guess where data
@@ -240,11 +237,9 @@ STARTING SCREEN: {json.dumps(observation)[:1500]}
             return {"plan": [], "briefing": "", "pages_used": []}
 
     def unstick(self, task: str, plan: list[str], step: int, recent: list[str], observation: dict,
-                notes: list[str] | None = None, refine: bool = False) -> dict:
-        why = ("The agent has now read what it needed (see NOTES). Rewrite the remaining plan concretely: unroll any "
-               "'for each' into one subgoal per item with the actual values from the notes, each typed value in \"quotes\"."
-               if refine else "The fast policy is stuck. Search the brain for the app or pattern involved and work out what is going wrong.")
-        out = self._run("refine" if refine else "unstick", f"""{why} Answer with ONE JSON object and nothing else:
+                notes: list[str] | None = None) -> dict:
+        out = self._run("unstick", f"""The fast policy is going in circles. Search the brain for the app or pattern involved, work out
+what is going wrong, and answer with ONE JSON object and nothing else:
 {{"plan": [<revised remaining subgoals from here on, first one is the very next thing to do>],
  "briefing": "<max 700 chars of concrete guidance for the current screen and the steps after it>",
  "pages_used": [<paths>]}}

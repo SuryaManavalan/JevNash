@@ -480,7 +480,7 @@ class PaintEnv(BrowserEnv):
                 f"given by two corner cells, fill = bucket. Colours: {colours}.\n"
                 f"Plan limit: at most {limit} subgoals (this overrides the usual limit). Each subgoal is ONE stroke, written exactly as: "
                 f"Draw <tool> in colour \"<colour>\" from cell \"<cell>\" to cell \"<cell>\" (pencil/fill: at cell \"<cell>\"). "
-                f"Later strokes paint over earlier ones: large background areas first, details last. replan_after must be null.\n")
+                f"Later strokes paint over earlier ones: large background areas first, details last.\n")
 
     def briefing_material(self) -> str:
         return ("DRAWING TASK MATERIAL\n" + self._rules(self.max_prims)
